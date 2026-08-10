@@ -194,7 +194,15 @@ public partial class MainWindow : Window
         }
         Placeholder.Visibility = Visibility.Collapsed;
         SetNavEnabled(true);
-        Status($"Mirroring {h.Name} ({h.Width}×{h.Height}). Click to tap, drag to swipe, right-click = Back.");
+
+        // Show the detected device: friendly name, with the bare model number and
+        // Android version alongside it when the phone reported them.
+        var detail = h.Model.Length > 0 && !h.Name.Contains(h.Model, StringComparison.OrdinalIgnoreCase)
+            ? $"{h.Name} · {h.Model}"
+            : h.Name;
+        if (h.AndroidVersion.Length > 0) detail += $" · Android {h.AndroidVersion}";
+        Title = $"PC Phone Connect — {h.Name}";
+        Status($"Mirroring {detail} ({h.Width}×{h.Height}). Click to tap, drag to swipe, right-click = Back.");
 
         // On first connect, start the view on the phone's home page.
         if (!_initialHomeDone)
@@ -237,6 +245,7 @@ public partial class MainWindow : Window
     private void ResetUi(string status)
     {
         _recentsMode = false;
+        Title = "PC Phone Connect";
         ConnectButton.Content = "Connect";
         SetNavEnabled(false);
         ScreenImage.Source = null;

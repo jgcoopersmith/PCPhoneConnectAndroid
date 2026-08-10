@@ -106,7 +106,9 @@ public sealed class PhoneClient : IDisposable
                 root.TryGetProperty("w", out var w) ? w.GetInt32() : 0,
                 root.TryGetProperty("h", out var h) ? h.GetInt32() : 0,
                 root.TryGetProperty("sw", out var sw) ? sw.GetInt32() : 0,
-                root.TryGetProperty("sh", out var sh) ? sh.GetInt32() : 0);
+                root.TryGetProperty("sh", out var sh) ? sh.GetInt32() : 0,
+                root.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "",
+                root.TryGetProperty("android", out var a) ? a.GetString() ?? "" : "");
         }
         catch
         {
@@ -199,4 +201,6 @@ public sealed class PhoneClient : IDisposable
     public void Dispose() => Disconnect();
 }
 
-public record DeviceHeader(string Name, int Width, int Height, int StreamWidth, int StreamHeight);
+public record DeviceHeader(
+    string Name, int Width, int Height, int StreamWidth, int StreamHeight,
+    string Model = "", string AndroidVersion = "");

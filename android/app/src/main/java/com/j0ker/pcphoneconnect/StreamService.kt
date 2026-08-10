@@ -231,7 +231,9 @@ class StreamService : Service() {
         try {
             // Header
             val header = JSONObject()
-                .put("name", Build.MODEL ?: "Android")
+                .put("name", deviceDisplayName())
+                .put("model", Build.MODEL ?: "")
+                .put("android", Build.VERSION.RELEASE ?: "")
                 .put("w", realWidth)
                 .put("h", realHeight)
                 .put("sw", streamWidth)
@@ -314,6 +316,36 @@ class StreamService : Service() {
 
     private fun px(nx: Double): Float = (nx.coerceIn(0.0, 1.0) * realWidth).toFloat()
     private fun py(ny: Double): Float = (ny.coerceIn(0.0, 1.0) * realHeight).toFloat()
+
+    /**
+     * A human-readable device name. [Build.MODEL] alone is a bare part number
+     * ("SM-S926U"), so prefer the OEM marketing name ("Galaxy S24+") where the
+     * vendor publishes one, then the user's device name, and finally fall back
+     * to manufacturer + model.
+     */
+    private fun deviceDisplayName(): String {
+        val model = (Build.MODEL ?: "Android").trim()
+        val mfr = (Build.MANUFACTURER ?: "").trim()
+            .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+
+        val friendly = systemProperty("ro.product.marketname")
+            ?: systemProperty("ro.product.vendor.marketname")
+            ?: systemProperty("ro.vendor.product.display")
+            ?: runCatching {
+                android.provider.Settings.Global.getString(contentResolver, "device_name")
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+
+        val base = if (!friendly.isNullOrBlank() && !friendly.equals(model, true)) friendly else model
+        // Avoid "Samsung Samsung Galaxy…" when the name already names the maker.
+        return if (mfr.isEmpty() || base.contains(mfr, ignoreCase = true)) base else "$mfr $base"
+    }
+
+    /** Read a build system property; absent or blocked properties yield null. */
+    private fun systemProperty(key: String): String? = runCatching {
+        val cls = Class.forName("android.os.SystemProperties")
+        val get = cls.getMethod("get", String::class.java)
+        (get.invoke(null, key) as? String)?.trim()?.takeIf { it.isNotEmpty() }
+    }.getOrNull()
 
     private fun startForegroundNotification() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

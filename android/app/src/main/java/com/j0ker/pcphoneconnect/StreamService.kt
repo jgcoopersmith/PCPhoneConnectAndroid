@@ -318,26 +318,58 @@ class StreamService : Service() {
     private fun py(ny: Double): Float = (ny.coerceIn(0.0, 1.0) * realHeight).toFloat()
 
     /**
-     * A human-readable device name. [Build.MODEL] alone is a bare part number
-     * ("SM-S926U"), so prefer the OEM marketing name ("Galaxy S24+") where the
-     * vendor publishes one, then the user's device name, and finally fall back
-     * to manufacturer + model.
+     * The phone's product name. [Build.MODEL] alone is a bare part number
+     * ("SM-S926U"), so prefer an OEM marketing-name property, then decode the
+     * model code, and finally fall back to manufacturer + model. Google and
+     * several other OEMs already put the retail name in MODEL, in which case
+     * every step below simply passes it through.
      */
     private fun deviceDisplayName(): String {
         val model = (Build.MODEL ?: "Android").trim()
         val mfr = (Build.MANUFACTURER ?: "").trim()
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 
-        val friendly = systemProperty("ro.product.marketname")
+        val marketing = systemProperty("ro.product.marketname")
             ?: systemProperty("ro.product.vendor.marketname")
             ?: systemProperty("ro.vendor.product.display")
-            ?: runCatching {
-                android.provider.Settings.Global.getString(contentResolver, "device_name")
-            }.getOrNull()?.takeIf { it.isNotBlank() }
 
-        val base = if (!friendly.isNullOrBlank() && !friendly.equals(model, true)) friendly else model
+        val base = when {
+            !marketing.isNullOrBlank() && !marketing.equals(model, true) -> marketing
+            else -> samsungProductName(model) ?: model
+        }
         // Avoid "Samsung Samsung Galaxy…" when the name already names the maker.
         return if (mfr.isEmpty() || base.contains(mfr, ignoreCase = true)) base else "$mfr $base"
+    }
+
+    /**
+     * Samsung publishes no marketing-name property, so map its model codes to the
+     * retail name: SM-S926U -> "Galaxy S24+". Codes follow a regular scheme, where
+     * the third digit is the generation and the fourth the variant. Anything that
+     * doesn't match returns null so the caller falls back to the raw model.
+     */
+    private fun samsungProductName(model: String): String? {
+        val m = model.uppercase()
+        if (!m.startsWith("SM-")) return null
+
+        // Galaxy S: SM-S9<gen><variant>, gen 0=S22 .. 3=S25; variant 1=base, 6=+, 8=Ultra.
+        Regex("^SM-S9(\\d)(\\d)").find(m)?.let { r ->
+            val gen = 22 + r.groupValues[1].toInt()
+            val variant = when (r.groupValues[2]) {
+                "1" -> ""
+                "6" -> "+"
+                "8" -> " Ultra"
+                else -> return@let
+            }
+            return "Galaxy S$gen$variant"
+        }
+        // Galaxy Z Fold / Flip.
+        Regex("^SM-F9\\d{2}").find(m)?.let { return "Galaxy Z Fold" }
+        Regex("^SM-F7\\d{2}").find(m)?.let { return "Galaxy Z Flip" }
+        // Galaxy A / Note / Tab keep their numbering.
+        Regex("^SM-A(\\d{2,3})").find(m)?.let { return "Galaxy A${it.groupValues[1]}" }
+        Regex("^SM-N(\\d{3})").find(m)?.let { return "Galaxy Note" }
+        Regex("^SM-[TXP]\\d{3}").find(m)?.let { return "Galaxy Tab" }
+        return null
     }
 
     /** Read a build system property; absent or blocked properties yield null. */

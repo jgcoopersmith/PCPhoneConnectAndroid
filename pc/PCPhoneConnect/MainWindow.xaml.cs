@@ -68,6 +68,11 @@ public partial class MainWindow : Window
         LoadFolders();
         HistoryList.ItemsSource = _history;
 
+        // Read the version from the assembly so the badge can't drift from the
+        // csproj. 1.50 ships as 1.50.0.0, so trim the trailing zero parts.
+        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        if (v != null) VersionText.Text = $"v{v.Major}.{v.Minor:00}";
+
         // Remember the last connection: pre-fill the fields on launch.
         if (_history.Count > 0) ApplyEntry(_history[0]);
     }

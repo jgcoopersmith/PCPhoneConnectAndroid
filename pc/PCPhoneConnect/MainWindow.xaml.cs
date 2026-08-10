@@ -16,6 +16,12 @@ public partial class MainWindow : Window
     private (double x, double y)? _downNorm;
     private readonly Stopwatch _pressTimer = new();
 
+    // Live drag ("grab and pull"): once the cursor moves past the tap threshold
+    // while held, we stream a continuous touch (down -> move* -> up).
+    private bool _dragging;
+    private readonly Stopwatch _moveThrottle = new();
+    private const double MoveIntervalMs = 15; // cap move messages to ~66/s
+
     // While the phone is showing Recent apps (opened via the Recents button/key),
     // the wheel scrolls the carousel horizontally instead of vertically.
     private bool _recentsMode;
@@ -170,13 +176,36 @@ public partial class MainWindow : Window
         var p = e.GetPosition(ScreenImage);
         _downPoint = p;
         _downNorm = ToNormalized(p);
+        _dragging = false;
         _pressTimer.Restart();
+        _moveThrottle.Restart();
         ScreenImage.CaptureMouse();
+    }
+
+    private void OnScreenMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_client.IsConnected || !ScreenImage.IsMouseCaptured || _downNorm == null) return;
+        var cur = ToNormalized(e.GetPosition(ScreenImage));
+        if (cur == null) return;
+
+        if (!_dragging)
+        {
+            double dx = (cur.Value.x - _downNorm.Value.x) * _srcW;
+            double dy = (cur.Value.y - _downNorm.Value.y) * _srcH;
+            if (Math.Sqrt(dx * dx + dy * dy) < TapMovePixels) return; // still a potential tap
+            _dragging = true;
+            _client.TouchDown(_downNorm.Value.x, _downNorm.Value.y); // grab where the press began
+            _moveThrottle.Restart();
+        }
+
+        if (_moveThrottle.Elapsed.TotalMilliseconds < MoveIntervalMs) return;
+        _moveThrottle.Restart();
+        _client.TouchMove(cur.Value.x, cur.Value.y);
     }
 
     private void OnScreenMouseUp(object sender, MouseButtonEventArgs e)
     {
-        if (!_client.IsConnected) { _downNorm = null; return; }
+        if (!_client.IsConnected) { _downNorm = null; _dragging = false; return; }
         ScreenImage.ReleaseMouseCapture();
         _pressTimer.Stop();
 
@@ -184,9 +213,16 @@ public partial class MainWindow : Window
         var upNorm = ToNormalized(upPoint);
         var start = _downNorm;
         _downNorm = null;
-        if (start == null) return;
-        // If the release fell outside the image, fall back to the press point.
+        if (start == null) { _dragging = false; return; }
         var end = upNorm ?? start.Value;
+
+        // A live drag was in progress — release the continuous touch.
+        if (_dragging)
+        {
+            _dragging = false;
+            _client.TouchUp(end.x, end.y);
+            return;
+        }
 
         double dxPix = (end.x - start.Value.x) * _srcW;
         double dyPix = (end.y - start.Value.y) * _srcH;
@@ -202,6 +238,7 @@ public partial class MainWindow : Window
         }
         else
         {
+            // Fast flick that never triggered a move event — send it as one swipe.
             int dur = (int)Math.Clamp(ms, 50, 900);
             _client.Swipe(start.Value.x, start.Value.y, end.x, end.y, dur);
         }

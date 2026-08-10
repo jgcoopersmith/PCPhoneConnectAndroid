@@ -125,6 +125,16 @@ public sealed class PhoneClient : IDisposable
     public void Key(string key) =>
         Send($"{{\"t\":\"key\",\"k\":\"{key}\"}}");
 
+    // Continuous drag: a touch that stays down across down -> move* -> up.
+    public void TouchDown(double x, double y) =>
+        Send($"{{\"t\":\"down\",\"x\":{F(x)},\"y\":{F(y)}}}");
+
+    public void TouchMove(double x, double y) =>
+        Send($"{{\"t\":\"move\",\"x\":{F(x)},\"y\":{F(y)}}}");
+
+    public void TouchUp(double x, double y) =>
+        Send($"{{\"t\":\"up\",\"x\":{F(x)},\"y\":{F(y)}}}");
+
     private static string F(double v) =>
         v.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture);
 

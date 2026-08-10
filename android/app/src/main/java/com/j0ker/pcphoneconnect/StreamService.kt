@@ -293,6 +293,9 @@ class StreamService : Service() {
                     px(o.optDouble("x2")), py(o.optDouble("y2")),
                     o.optLong("dur", 200)
                 )
+                "down" -> svc.touchDown(px(o.optDouble("x")), py(o.optDouble("y")))
+                "move" -> svc.touchMove(px(o.optDouble("x")), py(o.optDouble("y")))
+                "up" -> svc.touchUp(px(o.optDouble("x")), py(o.optDouble("y")))
                 "key" -> svc.globalKey(o.optString("k"))
             }
         } catch (t: Throwable) {

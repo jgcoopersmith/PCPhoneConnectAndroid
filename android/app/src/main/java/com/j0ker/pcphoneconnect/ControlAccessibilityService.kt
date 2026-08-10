@@ -56,6 +56,65 @@ class ControlAccessibilityService : AccessibilityService() {
         dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
     }
 
+    // ---- Continuous drag ("grab and pull") via gesture continuation ----
+    // A touch stays down across down -> move* -> up, so the content follows the
+    // cursor live (home-screen paging, dragging, sliders) instead of a one-shot flick.
+
+    private var dragStroke: GestureDescription.StrokeDescription? = null
+    private var lastX = 0f
+    private var lastY = 0f
+
+    fun touchDown(x: Float, y: Float) {
+        val path = Path().apply { moveTo(x, y) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, DRAG_SEGMENT_MS, true)
+        dragStroke = stroke
+        lastX = x; lastY = y
+        try {
+            dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        } catch (_: Throwable) {
+            dragStroke = null
+        }
+    }
+
+    fun touchMove(x: Float, y: Float) {
+        val prev = dragStroke ?: run { touchDown(x, y); return }
+        val path = Path().apply { moveTo(lastX, lastY); lineTo(x, y) }
+        val next = try {
+            prev.continueStroke(path, 0, DRAG_SEGMENT_MS, true)
+        } catch (_: Throwable) {
+            // Previous gesture already ended (dropped/timed out) — start a fresh touch.
+            touchDown(x, y); return
+        }
+        dragStroke = next
+        lastX = x; lastY = y
+        try {
+            dispatchGesture(GestureDescription.Builder().addStroke(next).build(), null, null)
+        } catch (_: Throwable) {
+            dragStroke = null
+        }
+    }
+
+    fun touchUp(x: Float, y: Float) {
+        val prev = dragStroke
+        dragStroke = null
+        if (prev == null) { tap(x, y); return }
+        val path = Path().apply {
+            moveTo(lastX, lastY)
+            // A zero-length path is rejected; nudge by a pixel if the finger didn't move.
+            if (x == lastX && y == lastY) lineTo(x + 1f, y) else lineTo(x, y)
+        }
+        val end = try {
+            prev.continueStroke(path, 0, DRAG_SEGMENT_MS, false)
+        } catch (_: Throwable) {
+            null
+        }
+        if (end != null) {
+            try {
+                dispatchGesture(GestureDescription.Builder().addStroke(end).build(), null, null)
+            } catch (_: Throwable) { }
+        }
+    }
+
     /** key is one of: back, home, recents, notifications, power. */
     fun globalKey(key: String) {
         val action = when (key.lowercase()) {
@@ -71,6 +130,10 @@ class ControlAccessibilityService : AccessibilityService() {
     }
 
     companion object {
+        // Per-segment gesture duration for continuous drags. A little longer than the
+        // PC's move cadence so consecutive segments overlap and stay continuous.
+        private const val DRAG_SEGMENT_MS = 60L
+
         @Volatile
         var instance: ControlAccessibilityService? = null
             private set

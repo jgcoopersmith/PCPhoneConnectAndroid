@@ -289,6 +289,9 @@ class StreamService : Service() {
                 .put("sh", streamHeight)
                 .put("files", files.hasAccess)
                 .put("root", files.defaultRoot())
+                // Whether input injection is actually available. Without this the
+                // PC mirrors happily while every tap is silently discarded.
+                .put("control", ControlAccessibilityService.isEnabled)
                 .toString()
                 .toByteArray(Charsets.UTF_8)
             sendFramed(TYPE_HEADER, header)

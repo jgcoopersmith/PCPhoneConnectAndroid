@@ -339,7 +339,10 @@ public sealed class PhoneClient : IDisposable
                 root.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "",
                 root.TryGetProperty("android", out var a) ? a.GetString() ?? "" : "",
                 root.TryGetProperty("files", out var f) && f.ValueKind == JsonValueKind.True,
-                root.TryGetProperty("root", out var rt) ? rt.GetString() ?? "" : "");
+                root.TryGetProperty("root", out var rt) ? rt.GetString() ?? "" : "",
+                // Older builds don't report this; assume control works so we don't
+                // warn about a phone that is actually fine.
+                !root.TryGetProperty("control", out var ct) || ct.ValueKind != JsonValueKind.False);
         }
         catch
         {
@@ -517,7 +520,7 @@ public sealed class PhoneClient : IDisposable
 public record DeviceHeader(
     string Name, int Width, int Height, int StreamWidth, int StreamHeight,
     string Model = "", string AndroidVersion = "",
-    bool FileAccess = false, string StorageRoot = "");
+    bool FileAccess = false, string StorageRoot = "", bool ControlEnabled = true);
 
 /// <summary>One entry in a phone folder listing.</summary>
 public record PhoneEntry(string Name, bool IsDirectory, long Size);

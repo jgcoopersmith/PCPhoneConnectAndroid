@@ -197,6 +197,18 @@ public partial class MainWindow : Window
 
     private bool _initialHomeDone;
 
+    /// <summary>
+    /// Land on the phone's MAIN home page. A single Home press only returns to the
+    /// launcher on whatever page it was last showing; pressing Home again while
+    /// already on the launcher is what jumps to the primary page.
+    /// </summary>
+    private async Task GoToMainHomeAsync()
+    {
+        _client.Key("home");
+        await Task.Delay(450);
+        if (_client.IsConnected) _client.Key("home");
+    }
+
     private void OnHeader(DeviceHeader h) => Dispatcher.Invoke(() =>
     {
         // Shape the bezel to the real device aspect ratio.
@@ -219,11 +231,20 @@ public partial class MainWindow : Window
         Title = $"PC Phone Connect — {h.Name}";
         Status($"Mirroring {detail} ({h.Width}×{h.Height}). Click to tap, drag to swipe, right-click = Back.");
 
-        // On first connect, start the view on the phone's home page.
-        if (!_initialHomeDone)
+        // Start the view on the phone's main home page. Only mark it done once
+        // control actually works, so a connection made while the accessibility
+        // service is off retries instead of silently skipping.
+        if (!_initialHomeDone && h.ControlEnabled)
         {
             _initialHomeDone = true;
-            _client.Key("home");
+            _ = GoToMainHomeAsync();
+        }
+
+        if (!h.ControlEnabled)
+        {
+            Status("Mirroring only — remote control is OFF. On the phone, tap " +
+                   "\"Enable control (Accessibility settings)\". An app update can " +
+                   "switch it off.");
         }
 
         if (h.StorageRoot.Length > 0) _storageRoot = h.StorageRoot;

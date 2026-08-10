@@ -16,6 +16,10 @@ public partial class MainWindow : Window
     private (double x, double y)? _downNorm;
     private readonly Stopwatch _pressTimer = new();
 
+    // While the phone is showing Recent apps (opened via the Recents button/key),
+    // the wheel scrolls the carousel horizontally instead of vertically.
+    private bool _recentsMode;
+
     private const double TapMovePixels = 14; // device-space movement below this = tap
 
     public MainWindow()
@@ -125,6 +129,7 @@ public partial class MainWindow : Window
 
     private void ResetUi(string status)
     {
+        _recentsMode = false;
         ConnectButton.Content = "Connect";
         SetNavEnabled(false);
         ScreenImage.Source = null;
@@ -190,6 +195,8 @@ public partial class MainWindow : Window
 
         if (moved < TapMovePixels)
         {
+            // A tap selects/dismisses — that leaves the Recents carousel.
+            _recentsMode = false;
             if (ms >= 500) _client.LongPress(start.Value.x, start.Value.y, (int)Math.Min(ms, 2000));
             else _client.Tap(start.Value.x, start.Value.y);
         }
@@ -202,39 +209,43 @@ public partial class MainWindow : Window
 
     private void OnScreenRightUp(object sender, MouseButtonEventArgs e)
     {
-        if (_client.IsConnected) _client.Key("back");
+        if (!_client.IsConnected) return;
+        _recentsMode = false;
+        _client.Key("back");
     }
 
     /// <summary>
-    /// Mouse wheel → vertical swipe, so scrolling works in browsers, Reddit, feeds, etc.
-    /// Wheel up scrolls the page up (finger swipes down); wheel down scrolls down
-    /// (finger swipes up). The swipe runs at the cursor's X so split layouts scroll
-    /// the pane under the pointer.
+    /// Mouse wheel → swipe, so scrolling works in browsers, Reddit, feeds, etc.
+    /// Normally vertical: wheel up scrolls the page up (finger swipes down), wheel
+    /// down scrolls down (finger swipes up). In Recents mode the carousel is
+    /// horizontal, so the wheel swipes left/right instead. The swipe runs at the
+    /// cursor position so split layouts scroll the pane under the pointer.
     /// </summary>
     private void OnScreenWheel(object sender, MouseWheelEventArgs e)
     {
         if (!_client.IsConnected) return;
 
         var n = ToNormalized(e.GetPosition(ScreenImage));
-        double cx = Math.Clamp(n?.x ?? 0.5, 0.05, 0.95);
-
-        const double distance = 0.45; // fraction of screen height per notch
+        const double distance = 0.45; // fraction of the screen per notch
         double half = distance / 2;
 
-        double y1, y2;
-        if (e.Delta < 0) // wheel down → scroll page down → swipe up
+        if (_recentsMode)
         {
-            y1 = 0.5 + half;
-            y2 = 0.5 - half;
+            double cy = Math.Clamp(n?.y ?? 0.5, 0.05, 0.95);
+            // Wheel down → move forward through recents → swipe left; wheel up → right.
+            double x1 = e.Delta < 0 ? 0.5 + half : 0.5 - half;
+            double x2 = e.Delta < 0 ? 0.5 - half : 0.5 + half;
+            _client.Swipe(x1, cy, x2, cy, 90);
         }
-        else // wheel up → scroll page up → swipe down
+        else
         {
-            y1 = 0.5 - half;
-            y2 = 0.5 + half;
+            double cx = Math.Clamp(n?.x ?? 0.5, 0.05, 0.95);
+            // Wheel down → scroll page down → swipe up; wheel up → swipe down.
+            double y1 = e.Delta < 0 ? 0.5 + half : 0.5 - half;
+            double y2 = e.Delta < 0 ? 0.5 - half : 0.5 + half;
+            _client.Swipe(cx, y1, cx, y2, 90);
         }
 
-        // A short duration gives a flick with a little momentum, like a real scroll.
-        _client.Swipe(cx, y1, cx, y2, 90);
         e.Handled = true;
     }
 
@@ -243,15 +254,15 @@ public partial class MainWindow : Window
         if (!_client.IsConnected) return;
         switch (e.Key)
         {
-            case Key.Escape: _client.Key("back"); e.Handled = true; break;
-            case Key.Home: _client.Key("home"); e.Handled = true; break;
+            case Key.Escape: _recentsMode = false; _client.Key("back"); e.Handled = true; break;
+            case Key.Home: _recentsMode = false; _client.Key("home"); e.Handled = true; break;
         }
     }
 
     // ---------------- Navigation buttons ----------------
 
-    private void OnBackClick(object sender, RoutedEventArgs e) => _client.Key("back");
-    private void OnHomeClick(object sender, RoutedEventArgs e) => _client.Key("home");
-    private void OnRecentsClick(object sender, RoutedEventArgs e) => _client.Key("recents");
+    private void OnBackClick(object sender, RoutedEventArgs e) { _recentsMode = false; _client.Key("back"); }
+    private void OnHomeClick(object sender, RoutedEventArgs e) { _recentsMode = false; _client.Key("home"); }
+    private void OnRecentsClick(object sender, RoutedEventArgs e) { _recentsMode = true; _client.Key("recents"); }
     private void OnNotificationsClick(object sender, RoutedEventArgs e) => _client.Key("notifications");
 }

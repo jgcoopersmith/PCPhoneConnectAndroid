@@ -4,8 +4,11 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Media3D;
 
 namespace PCPhoneConnect;
 
@@ -72,6 +75,8 @@ public partial class MainWindow : Window
         // csproj. 1.50 ships as 1.50.0.0, so trim the trailing zero parts.
         var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         if (v != null) VersionText.Text = $"v{v.Major}.{v.Minor:00}";
+
+        LoadWidgetSettings();
 
         // Remember the last connection: pre-fill the fields on launch.
         if (_history.Count > 0) ApplyEntry(_history[0]);
@@ -585,6 +590,217 @@ public partial class MainWindow : Window
         _suppressMirror = true;
         TypeBox.Clear();
         _suppressMirror = false;
+    }
+
+    // ---------------- Widget view ----------------
+
+    private bool _widgetMode;
+    private Rect _normalBounds;
+    private WindowStyle _normalStyle;
+    private ResizeMode _normalResize;
+
+    private static readonly string WidgetSettingsPath = Path.Combine(
+        Path.GetDirectoryName(HistoryPath)!, "widget.txt");
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValue = "PCPhoneConnect";
+
+    /// <summary>
+    /// Double-click toggles the compact widget. Clicks that land on the mirror or
+    /// on a control are left alone — double-tap is a real gesture on the phone and
+    /// the text box needs its own double-click to select a word.
+    /// </summary>
+    private void OnWindowDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (IsInteractiveSource(e.OriginalSource as DependencyObject)) return;
+        SetWidgetMode(!_widgetMode);
+        e.Handled = true;
+    }
+
+    /// <summary>True if the point is inside the mirror or any input control.</summary>
+    private bool IsInteractiveSource(DependencyObject? source)
+    {
+        while (source != null)
+        {
+            if (ReferenceEquals(source, ScreenImage)) return true;
+            if (source is TextBox or ButtonBase or ListBox or ListBoxItem) return true;
+            source = source is Visual or Visual3D ? VisualTreeHelper.GetParent(source) : null;
+        }
+        return false;
+    }
+
+    private void SetWidgetMode(bool on)
+    {
+        if (on == _widgetMode) return;
+
+        if (on)
+        {
+            _normalBounds = new Rect(Left, Top, Width, Height);
+            _normalStyle = WindowStyle;
+            _normalResize = ResizeMode;
+
+            // Strip everything except the mirror.
+            ConnectionBar.Visibility = Visibility.Collapsed;
+            NavBar.Visibility = Visibility.Collapsed;
+            TextBar.Visibility = Visibility.Collapsed;
+            StatusBar.Visibility = Visibility.Collapsed;
+            FilesTab.Visibility = Visibility.Collapsed;
+            FilePanel.Visibility = Visibility.Collapsed;
+            ContentGrid.Margin = new Thickness(0);
+
+            WindowStyle = WindowStyle.None;
+            ResizeMode = ResizeMode.CanResizeWithGrip;
+            MinWidth = 160;
+            MinHeight = 260;
+            Width = Math.Max(240, _normalBounds.Width * 0.55);
+            Height = Math.Max(400, _normalBounds.Height * 0.55);
+        }
+        else
+        {
+            ConnectionBar.Visibility = Visibility.Visible;
+            NavBar.Visibility = Visibility.Visible;
+            TextBar.Visibility = Visibility.Visible;
+            StatusBar.Visibility = Visibility.Visible;
+            FilesTab.Visibility = Visibility.Visible;
+            ContentGrid.Margin = new Thickness(16);
+
+            WindowStyle = _normalStyle;
+            ResizeMode = _normalResize;
+            MinWidth = 360;
+            MinHeight = 600;
+            if (_normalBounds.Width > 0)
+            {
+                Width = _normalBounds.Width;
+                Height = _normalBounds.Height;
+                Left = _normalBounds.X;
+                Top = _normalBounds.Y;
+            }
+        }
+
+        _widgetMode = on;
+        WidgetViewItem.IsChecked = on;
+        SaveWidgetSettings();
+    }
+
+    private void OnToggleWidgetFromMenu(object sender, RoutedEventArgs e) =>
+        SetWidgetMode(WidgetViewItem.IsChecked);
+
+    private void OnCloseFromMenu(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>Chromeless widget has no title bar, so dragging the frame moves it.</summary>
+    private void OnRootMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_widgetMode || e.ChangedButton != MouseButton.Left) return;
+        if (IsInteractiveSource(e.OriginalSource as DependencyObject)) return;
+        try { DragMove(); } catch { /* already released */ }
+    }
+
+    /// <summary>Right-click on the mirror means Back, so don't open the menu there.</summary>
+    private void OnContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (ReferenceEquals(e.OriginalSource, ScreenImage) ||
+            IsInteractiveSource(e.OriginalSource as DependencyObject))
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void OnAlwaysOnTop(object sender, RoutedEventArgs e)
+    {
+        Topmost = AlwaysOnTopItem.IsChecked;
+        SaveWidgetSettings();
+    }
+
+    private void OnOpacity(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string tag } &&
+            double.TryParse(tag, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value))
+        {
+            Opacity = Math.Clamp(value, 0.2, 1.0);
+            SaveWidgetSettings();
+        }
+    }
+
+    private void OnStartWithWindows(object sender, RoutedEventArgs e)
+    {
+        var wanted = StartWithWindowsItem.IsChecked;
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+            if (key == null) throw new IOException("Run key unavailable.");
+            if (wanted)
+            {
+                var exe = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(exe)) throw new IOException("Cannot resolve the exe path.");
+                key.SetValue(RunValue, $"\"{exe}\"");
+            }
+            else
+            {
+                key.DeleteValue(RunValue, throwOnMissingValue: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            StartWithWindowsItem.IsChecked = !wanted; // reflect what actually happened
+            Status($"Could not change startup setting: {ex.Message}");
+        }
+    }
+
+    private bool StartsWithWindows()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey);
+            return key?.GetValue(RunValue) != null;
+        }
+        catch { return false; }
+    }
+
+    // Widget preferences persist alongside the other settings.
+    private void LoadWidgetSettings()
+    {
+        StartWithWindowsItem.IsChecked = StartsWithWindows();
+        try
+        {
+            if (!File.Exists(WidgetSettingsPath)) return;
+            foreach (var line in File.ReadAllLines(WidgetSettingsPath))
+            {
+                var parts = line.Split('=', 2);
+                if (parts.Length != 2) continue;
+                var value = parts[1].Trim();
+                switch (parts[0].Trim().ToLowerInvariant())
+                {
+                    case "topmost":
+                        Topmost = value == "1";
+                        AlwaysOnTopItem.IsChecked = Topmost;
+                        break;
+                    case "opacity":
+                        if (double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out var o))
+                            Opacity = Math.Clamp(o, 0.2, 1.0);
+                        break;
+                    case "widget":
+                        if (value == "1") Dispatcher.BeginInvoke(() => SetWidgetMode(true));
+                        break;
+                }
+            }
+        }
+        catch { /* best-effort */ }
+    }
+
+    private void SaveWidgetSettings()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(WidgetSettingsPath)!);
+            File.WriteAllLines(WidgetSettingsPath, new[]
+            {
+                $"topmost={(Topmost ? 1 : 0)}",
+                $"opacity={Opacity.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}",
+                $"widget={(_widgetMode ? 1 : 0)}",
+            });
+        }
+        catch { /* best-effort */ }
     }
 
     // ---------------- File transfer panel ----------------

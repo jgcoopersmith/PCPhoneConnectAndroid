@@ -146,7 +146,7 @@
             </Grid.ColumnDefinitions>
             <Grid Grid.Column="0" Margin="0,0,8,0">
                 <TextBox x:Name="TypeBox"
-                         PreviewTextInput="OnTextInput"
+                         TextChanged="OnTypeChanged"
                          PreviewKeyDown="OnTextInputKeyDown"
                          ToolTip="Tap a text field on the phone first, then type here." />
                 <TextBlock IsHitTestVisible="False" Margin="10,0" VerticalAlignment="Center"

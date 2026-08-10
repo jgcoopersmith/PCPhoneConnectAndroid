@@ -142,6 +142,17 @@ class ControlAccessibilityService : AccessibilityService() {
         node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
     }
 
+    /**
+     * Replace the focused field's entire contents with [s] in one atomic action.
+     * The PC mirrors its text box here on every change, which avoids the
+     * per-keystroke read-modify-write races that dropped spaces and reordered
+     * characters, and bypasses on-device autocorrect.
+     */
+    fun setFieldText(s: String) {
+        val node = focusedEditable() ?: return
+        applyText(node, s, s.length)
+    }
+
     /** Insert [s] at the cursor of the focused field (no clipboard involved). */
     fun typeText(s: String) {
         if (s.isEmpty()) return

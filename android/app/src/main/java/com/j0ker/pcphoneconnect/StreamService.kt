@@ -297,6 +297,7 @@ class StreamService : Service() {
                 "move" -> svc.touchMove(px(o.optDouble("x")), py(o.optDouble("y")), o.optLong("d", 16))
                 "up" -> svc.touchUp(px(o.optDouble("x")), py(o.optDouble("y")), o.optLong("d", 16))
                 "text" -> svc.typeText(o.optString("s"))
+                "settext" -> svc.setFieldText(o.optString("s"))
                 "key" -> when (o.optString("k")) {
                     "del" -> svc.deleteText()
                     "enter" -> svc.imeEnter()

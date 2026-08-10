@@ -411,32 +411,43 @@ public partial class MainWindow : Window
 
     // ---------------- Text entry ----------------
 
-    private void OnTextInput(object sender, TextCompositionEventArgs e)
+    // The text box is the source of truth: its full contents are mirrored to the
+    // phone's focused field on every change (one atomic SET_TEXT). This avoids the
+    // per-keystroke races that dropped spaces, and bypasses on-device autocorrect.
+    private bool _suppressMirror;
+
+    private void OnTypeChanged(object sender, TextChangedEventArgs e)
     {
-        if (!_client.IsConnected) return;
-        if (!string.IsNullOrEmpty(e.Text)) _client.Text(e.Text); // live per-keystroke (and pastes)
+        if (_suppressMirror || !_client.IsConnected) return;
+        _client.SetText(TypeBox.Text);
     }
 
     private void OnTextInputKeyDown(object sender, KeyEventArgs e)
     {
         if (!_client.IsConnected) return;
-        switch (e.Key)
+        if (e.Key == Key.Enter)
         {
-            case Key.Back:
-                _client.Key("del");   // also let the local box delete, to stay in sync
-                break;
-            case Key.Enter:
-                _client.Key("enter"); // trigger the field's Search/Send/Go action
-                TypeBox.Clear();
-                e.Handled = true;
-                break;
+            _client.SetText(TypeBox.Text);   // make sure the field has the final text
+            _client.Key("enter");            // fire the field's Search/Send/Go action
+            ClearTypeBoxLocal();
+            e.Handled = true;
         }
+        // Backspace and all editing are handled locally by the TextBox and mirrored
+        // through OnTypeChanged, so no special-casing is needed.
     }
 
     private void OnClearField(object sender, RoutedEventArgs e)
     {
-        if (_client.IsConnected) _client.Key("clearall");
+        if (_client.IsConnected) _client.SetText("");
+        ClearTypeBoxLocal();
+    }
+
+    // Clear the box without pushing an empty field to the phone (used after submit).
+    private void ClearTypeBoxLocal()
+    {
+        _suppressMirror = true;
         TypeBox.Clear();
+        _suppressMirror = false;
     }
 
     // ---------------- Navigation buttons ----------------

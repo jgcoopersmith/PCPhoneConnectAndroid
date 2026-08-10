@@ -17,6 +17,9 @@ pc/**/obj/
 pc/.vs/
 *.user
 
+# ---- publish output (large self-contained exe) ----
+publish/
+
 # ---- misc ----
 .DS_Store
 Thumbs.db

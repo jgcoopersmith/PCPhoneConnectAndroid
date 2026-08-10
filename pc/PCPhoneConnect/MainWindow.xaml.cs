@@ -34,6 +34,14 @@ public partial class MainWindow : Window
     // the wheel scrolls the carousel horizontally instead of vertically.
     private bool _recentsMode;
 
+    // Wheel scrolling. A short distance played slowly reads as a drag, not a fling:
+    // a fast swipe makes the app coast after the gesture ends, which overshot content
+    // badly enough that you couldn't get back to it.
+    private const double WheelDistance = 0.16;  // fraction of screen height per notch
+    private const int WheelMs = 280;            // slow enough to avoid fling momentum
+    private const double RecentsWheelDistance = 0.30;
+    private const int RecentsWheelMs = 220;
+
     private const double TapMovePixels = 14; // device-space movement below this = tap
 
     // Recent connections, most-recent first, persisted between runs.
@@ -387,24 +395,24 @@ public partial class MainWindow : Window
         if (!_client.IsConnected) return;
 
         var n = ToNormalized(e.GetPosition(ScreenImage));
-        const double distance = 0.45; // fraction of the screen per notch
-        double half = distance / 2;
 
         if (_recentsMode)
         {
+            const double half = RecentsWheelDistance / 2;
             double cy = Math.Clamp(n?.y ?? 0.5, 0.05, 0.95);
             // Wheel down → move forward through recents → swipe left; wheel up → right.
             double x1 = e.Delta < 0 ? 0.5 + half : 0.5 - half;
             double x2 = e.Delta < 0 ? 0.5 - half : 0.5 + half;
-            _client.Swipe(x1, cy, x2, cy, 90);
+            _client.Swipe(x1, cy, x2, cy, RecentsWheelMs);
         }
         else
         {
+            const double half = WheelDistance / 2;
             double cx = Math.Clamp(n?.x ?? 0.5, 0.05, 0.95);
             // Wheel down → scroll page down → swipe up; wheel up → swipe down.
             double y1 = e.Delta < 0 ? 0.5 + half : 0.5 - half;
             double y2 = e.Delta < 0 ? 0.5 - half : 0.5 + half;
-            _client.Swipe(cx, y1, cx, y2, 90);
+            _client.Swipe(cx, y1, cx, y2, WheelMs);
         }
 
         e.Handled = true;

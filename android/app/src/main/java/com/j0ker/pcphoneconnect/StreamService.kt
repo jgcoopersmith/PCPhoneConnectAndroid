@@ -296,7 +296,13 @@ class StreamService : Service() {
                 "down" -> svc.touchDown(px(o.optDouble("x")), py(o.optDouble("y")))
                 "move" -> svc.touchMove(px(o.optDouble("x")), py(o.optDouble("y")), o.optLong("d", 16))
                 "up" -> svc.touchUp(px(o.optDouble("x")), py(o.optDouble("y")), o.optLong("d", 16))
-                "key" -> svc.globalKey(o.optString("k"))
+                "text" -> svc.typeText(o.optString("s"))
+                "key" -> when (o.optString("k")) {
+                    "del" -> svc.deleteText()
+                    "enter" -> svc.imeEnter()
+                    "clearall" -> svc.clearField()
+                    else -> svc.globalKey(o.optString("k"))
+                }
             }
         } catch (t: Throwable) {
             // ignore malformed control message

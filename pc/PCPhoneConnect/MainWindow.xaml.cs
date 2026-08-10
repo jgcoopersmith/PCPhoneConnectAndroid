@@ -409,6 +409,36 @@ public partial class MainWindow : Window
         }
     }
 
+    // ---------------- Text entry ----------------
+
+    private void OnTextInput(object sender, TextCompositionEventArgs e)
+    {
+        if (!_client.IsConnected) return;
+        if (!string.IsNullOrEmpty(e.Text)) _client.Text(e.Text); // live per-keystroke (and pastes)
+    }
+
+    private void OnTextInputKeyDown(object sender, KeyEventArgs e)
+    {
+        if (!_client.IsConnected) return;
+        switch (e.Key)
+        {
+            case Key.Back:
+                _client.Key("del");   // also let the local box delete, to stay in sync
+                break;
+            case Key.Enter:
+                _client.Key("enter"); // trigger the field's Search/Send/Go action
+                TypeBox.Clear();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void OnClearField(object sender, RoutedEventArgs e)
+    {
+        if (_client.IsConnected) _client.Key("clearall");
+        TypeBox.Clear();
+    }
+
     // ---------------- Navigation buttons ----------------
 
     private void OnBackClick(object sender, RoutedEventArgs e) { _recentsMode = false; _client.Key("back"); }

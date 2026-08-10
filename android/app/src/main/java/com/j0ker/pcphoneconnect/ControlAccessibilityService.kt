@@ -4,7 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Build
+import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 
 /**
  * Injects touch gestures and navigation actions on behalf of the paired PC.
@@ -117,6 +119,77 @@ class ControlAccessibilityService : AccessibilityService() {
             try {
                 dispatchGesture(GestureDescription.Builder().addStroke(end).build(), null, null)
             } catch (_: Throwable) { }
+        }
+    }
+
+    // ---- Text entry into the currently focused editable field ----
+
+    private fun focusedEditable(): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        val node = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return null
+        return if (node.isEditable) node else null
+    }
+
+    private fun applyText(node: AccessibilityNodeInfo, text: CharSequence, caret: Int) {
+        val setArgs = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setArgs)
+        val selArgs = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, caret)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, caret)
+        }
+        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
+    }
+
+    /** Insert [s] at the cursor of the focused field (no clipboard involved). */
+    fun typeText(s: String) {
+        if (s.isEmpty()) return
+        val node = focusedEditable() ?: return
+        val cur = node.text?.toString() ?: ""
+        var start = node.textSelectionStart
+        var end = node.textSelectionEnd
+        if (start < 0 || end < 0 || start > cur.length || end > cur.length) {
+            start = cur.length; end = cur.length
+        }
+        val lo = minOf(start, end); val hi = maxOf(start, end)
+        val updated = StringBuilder(cur.length + s.length)
+            .append(cur, 0, lo).append(s).append(cur, hi, cur.length)
+        applyText(node, updated, lo + s.length)
+    }
+
+    /** Backspace: delete the selection, or the character before the cursor. */
+    fun deleteText() {
+        val node = focusedEditable() ?: return
+        val cur = node.text?.toString() ?: ""
+        if (cur.isEmpty()) return
+        var start = node.textSelectionStart
+        var end = node.textSelectionEnd
+        if (start < 0 || end < 0 || start > cur.length || end > cur.length) {
+            start = cur.length; end = cur.length
+        }
+        val lo = minOf(start, end); val hi = maxOf(start, end)
+        if (lo == hi) {
+            if (lo == 0) return
+            applyText(node, cur.removeRange(lo - 1, lo), lo - 1)
+        } else {
+            applyText(node, cur.removeRange(lo, hi), lo)
+        }
+    }
+
+    /** Empty the focused field entirely. */
+    fun clearField() {
+        val node = focusedEditable() ?: return
+        applyText(node, "", 0)
+    }
+
+    /** Trigger the field's IME action (Search / Send / Go / newline). */
+    fun imeEnter() {
+        val node = focusedEditable() ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        } else {
+            typeText("\n")
         }
     }
 

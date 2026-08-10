@@ -54,6 +54,7 @@
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Connection bar -->
@@ -137,8 +138,38 @@
             <Button x:Name="NotificationsButton" Content="▾  Notifs" Click="OnNotificationsClick" IsEnabled="False" />
         </StackPanel>
 
+        <!-- Text input: type into the phone's focused field -->
+        <Grid Grid.Row="3" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Grid Grid.Column="0" Margin="0,0,8,0">
+                <TextBox x:Name="TypeBox"
+                         PreviewTextInput="OnTextInput"
+                         PreviewKeyDown="OnTextInputKeyDown"
+                         ToolTip="Tap a text field on the phone first, then type here." />
+                <TextBlock IsHitTestVisible="False" Margin="10,0" VerticalAlignment="Center"
+                           Foreground="#5A6B8C" Text="Type here to type on the phone…">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Text, ElementName=TypeBox}" Value="">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+            <Button Grid.Column="1" x:Name="ClearFieldButton" Content="⌫ Clear"
+                    Click="OnClearField"
+                    ToolTip="Clear the focused field on the phone" />
+        </Grid>
+
         <!-- Status bar -->
-        <TextBlock x:Name="StatusText" Grid.Row="3" Text="Enter the phone's IP and port, then Connect."
+        <TextBlock x:Name="StatusText" Grid.Row="4" Text="Enter the phone's IP and port, then Connect."
                    TextWrapping="Wrap" Margin="2,6,0,0" FontSize="12" />
     </Grid>
 </Window>

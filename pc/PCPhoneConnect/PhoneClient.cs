@@ -125,6 +125,10 @@ public sealed class PhoneClient : IDisposable
     public void Key(string key) =>
         Send($"{{\"t\":\"key\",\"k\":\"{key}\"}}");
 
+    /// <summary>Insert text at the cursor of the phone's focused field.</summary>
+    public void Text(string s) =>
+        Send("{\"t\":\"text\",\"s\":" + JsonSerializer.Serialize(s) + "}");
+
     // Continuous drag: a touch that stays down across down -> move* -> up.
     // durationMs is the real time the cursor took for this segment, so the phone
     // replays the stroke at the user's actual speed (needed for fling velocity).

@@ -54,6 +54,16 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         LoadHistory();
         HistoryList.ItemsSource = _history;
+
+        // Remember the last connection: pre-fill the fields on launch.
+        if (_history.Count > 0) ApplyEntry(_history[0]);
+    }
+
+    private void ApplyEntry(string entry)
+    {
+        var parts = entry.Split(':');
+        IpBox.Text = parts[0];
+        if (parts.Length > 1) PortBox.Text = parts[1];
     }
 
     // ---------------- Connection history ----------------
@@ -65,10 +75,10 @@ public partial class MainWindow : Window
 
     private void OnHistoryPick(object sender, MouseButtonEventArgs e)
     {
-        if (HistoryList.SelectedItem is not string entry) return;
-        var parts = entry.Split(':');
-        IpBox.Text = parts[0];
-        if (parts.Length > 1) PortBox.Text = parts[1];
+        // Resolve the clicked row directly (don't depend on selection state).
+        var item = ItemsControl.ContainerFromElement(HistoryList, (DependencyObject)e.OriginalSource) as ListBoxItem;
+        if (item?.DataContext is not string entry) return;
+        ApplyEntry(entry);
         HistoryPopup.IsOpen = false;
         ConnectButton.Focus();
     }

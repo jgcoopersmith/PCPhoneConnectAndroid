@@ -32,17 +32,21 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
     private val projectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK && result.data != null) {
-                val intent = Intent(this, StreamService::class.java).apply {
-                    action = StreamService.ACTION_START
-                    putExtra(StreamService.EXTRA_PORT, currentPort())
-                    putExtra(StreamService.EXTRA_RESULT_CODE, result.resultCode)
-                    putExtra(StreamService.EXTRA_RESULT_DATA, result.data)
-                }
-                ContextCompat.startForegroundService(this, intent)
+                startStreaming(result.resultCode, result.data!!)
             } else {
                 toast("Screen sharing was not granted")
             }
         }
+
+    private fun startStreaming(resultCode: Int, data: Intent) {
+        val intent = Intent(this, StreamService::class.java).apply {
+            action = StreamService.ACTION_START
+            putExtra(StreamService.EXTRA_PORT, currentPort())
+            putExtra(StreamService.EXTRA_RESULT_CODE, resultCode)
+            putExtra(StreamService.EXTRA_RESULT_DATA, data)
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -100,6 +104,12 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         if (!ControlAccessibilityService.isEnabled) {
             toast("Tip: enable the Accessibility service first for remote control")
         }
+        // The capture consent dialog cannot be skipped by an ordinary app. The
+        // PROJECT_MEDIA app-op used to allow it, but from Android 12 the system
+        // validates a real consent token, so getMediaProjection returns null
+        // without one no matter how the app-op is set (verified on Android 16).
+        // Removing the prompt needs a privileged/system install, or running the
+        // capture from a shell-side process the way scrcpy does.
         projectionLauncher.launch(screenCaptureIntent())
     }
 

@@ -26,6 +26,20 @@ public partial class MainWindow : Window
         _client.Disconnected += OnDisconnected;
         Closed += (_, _) => _client.Dispose();
         PreviewKeyDown += OnKeyDown;
+        Loaded += OnLoaded;
+    }
+
+    /// <summary>
+    /// Optional auto-connect: <c>PCPhoneConnect.exe &lt;ip&gt; [port]</c> prefills the
+    /// fields and connects on launch. With no arguments the app starts idle.
+    /// </summary>
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        var args = Environment.GetCommandLineArgs();
+        if (args.Length < 2) return;
+        IpBox.Text = args[1].Trim();
+        if (args.Length >= 3) PortBox.Text = args[2].Trim();
+        OnConnectClick(this, new RoutedEventArgs());
     }
 
     // ---------------- Connection ----------------

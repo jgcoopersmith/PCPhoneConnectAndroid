@@ -67,6 +67,8 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
             toast("Enable \"PC Phone Connect\" under Installed apps")
         }
 
+        binding.enableFilesButton.setOnClickListener { requestAllFilesAccess() }
+
         binding.startButton.setOnClickListener { requestStart() }
         binding.stopButton.setOnClickListener {
             startService(Intent(this, StreamService::class.java).apply {
@@ -100,6 +102,34 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         projectionLauncher.launch(projectionManager.createScreenCaptureIntent())
     }
 
+    /**
+     * Browsing shared storage needs "All files access" on Android 11+, which is
+     * granted from a system settings page rather than a runtime dialog.
+     */
+    private fun requestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            toast("Not needed on this Android version")
+            return
+        }
+        if (android.os.Environment.isExternalStorageManager()) {
+            toast("File transfer access is already on")
+            return
+        }
+        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+            data = android.net.Uri.parse("package:$packageName")
+        }
+        try {
+            startActivity(intent)
+        } catch (_: Throwable) {
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        }
+        toast("Turn on \"Allow access to manage all files\"")
+    }
+
+    private fun hasAllFilesAccess(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
+            android.os.Environment.isExternalStorageManager()
+
     private fun currentPort(): Int =
         binding.portInput.text?.toString()?.trim()?.toIntOrNull()?.takeIf { it in 1..65535 }
             ?: StreamService.DEFAULT_PORT
@@ -109,6 +139,9 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         binding.stopButton.isEnabled = running
         binding.accessibilityStatus.text =
             "Accessibility service: " + if (ControlAccessibilityService.isEnabled) "ON" else "OFF"
+        val filesOn = hasAllFilesAccess()
+        binding.fileAccessStatus.text = "File transfer access: " + if (filesOn) "ON" else "OFF"
+        binding.enableFilesButton.isEnabled = !filesOn
         if (running) {
             val port = currentPort()
             val ips = localIpv4Addresses()

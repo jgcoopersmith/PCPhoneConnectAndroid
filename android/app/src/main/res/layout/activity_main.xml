@@ -48,6 +48,22 @@
             android:layout_marginTop="8dp"
             android:text="Enable control (Accessibility settings)" />
 
+        <TextView
+            android:id="@+id/fileAccessStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="File transfer access: OFF"
+            android:textSize="14sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/enableFilesButton"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Allow file transfer (All files access)" />
+
         <!-- Step 2: streaming -->
         <TextView
             android:layout_width="wrap_content"

@@ -56,10 +56,15 @@ public partial class MainWindow : Window
         _client.HeaderReceived += OnHeader;
         _client.FrameReceived += OnFrame;
         _client.Disconnected += OnDisconnected;
+        _client.FolderListed += OnFolderListed;
+        _client.TransferProgress += OnTransferProgress;
+        _client.TransferDone += OnTransferDone;
+        _client.TransferError += OnTransferError;
         Closed += (_, _) => _client.Dispose();
         PreviewKeyDown += OnKeyDown;
         Loaded += OnLoaded;
         LoadHistory();
+        LoadFolders();
         HistoryList.ItemsSource = _history;
 
         // Remember the last connection: pre-fill the fields on launch.
@@ -209,6 +214,18 @@ public partial class MainWindow : Window
         {
             _initialHomeDone = true;
             _client.Key("home");
+        }
+
+        if (h.StorageRoot.Length > 0) _storageRoot = h.StorageRoot;
+        if (RemoteDirBox.Text.Trim().Length == 0) RemoteDirBox.Text = _storageRoot;
+        if (!h.FileAccess)
+        {
+            TransferStatus.Text = "File transfer needs \"All files access\" — " +
+                                  "tap \"Allow file transfer\" in the phone app.";
+        }
+        else if (FilePanel.Visibility == Visibility.Visible)
+        {
+            BrowsePhone(RemoteDirBox.Text.Trim());
         }
     });
 
@@ -478,6 +495,193 @@ public partial class MainWindow : Window
         _suppressMirror = true;
         TypeBox.Clear();
         _suppressMirror = false;
+    }
+
+    // ---------------- File transfer panel ----------------
+
+    private string _phonePath = "";
+    private string? _phoneParent;
+    private string _storageRoot = "/sdcard";
+    private static readonly string SettingsPath = Path.Combine(
+        Path.GetDirectoryName(HistoryPath)!, "folders.txt");
+
+    private void OnToggleFiles(object sender, RoutedEventArgs e)
+    {
+        bool opening = FilePanel.Visibility != Visibility.Visible;
+        FilePanel.Visibility = opening ? Visibility.Visible : Visibility.Collapsed;
+        FilesTab.Visibility = opening ? Visibility.Collapsed : Visibility.Visible;
+        if (opening && _client.IsConnected && PhoneFiles.Items.Count == 0)
+            BrowsePhone(RemoteDirBox.Text.Trim().Length > 0 ? RemoteDirBox.Text.Trim() : _storageRoot);
+    }
+
+    private void BrowsePhone(string path)
+    {
+        if (!_client.IsConnected) { TransferStatus.Text = "Connect to the phone first."; return; }
+        TransferStatus.Text = "Loading…";
+        _client.ListFolder(path);
+    }
+
+    private void OnFolderListed(FolderListing listing) => Dispatcher.Invoke(() =>
+    {
+        _phonePath = listing.Path;
+        _phoneParent = listing.Parent;
+        RemoteDirBox.Text = listing.Path;
+        PhoneFiles.Items.Clear();
+        foreach (var entry in listing.Entries)
+        {
+            PhoneFiles.Items.Add(new FileRow(entry));
+        }
+        TransferStatus.Text = listing.Entries.Count == 0
+            ? "Empty folder."
+            : $"{listing.Entries.Count} items. Double-click a folder to open it.";
+        SaveFolders();
+    });
+
+    private void OnPhoneUp(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_phoneParent)) BrowsePhone(_phoneParent!);
+    }
+
+    private void OnRemoteGo(object sender, RoutedEventArgs e) => BrowsePhone(RemoteDirBox.Text.Trim());
+
+    private void OnRemoteDirKey(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        BrowsePhone(RemoteDirBox.Text.Trim());
+        e.Handled = true;
+    }
+
+    private void OnPhoneFileOpen(object sender, MouseButtonEventArgs e)
+    {
+        if (PhoneFiles.SelectedItem is not FileRow row) return;
+        if (row.Entry.IsDirectory) BrowsePhone(CombinePhone(_phonePath, row.Entry.Name));
+        else OnDownload(sender, e);
+    }
+
+    private static string CombinePhone(string dir, string name) =>
+        dir.EndsWith('/') ? dir + name : dir + "/" + name;
+
+    private void OnDownload(object sender, RoutedEventArgs e)
+    {
+        if (!_client.IsConnected) { TransferStatus.Text = "Connect to the phone first."; return; }
+        if (PhoneFiles.SelectedItem is not FileRow row || row.Entry.IsDirectory)
+        {
+            TransferStatus.Text = "Select a file on the phone to download.";
+            return;
+        }
+        var local = LocalDirBox.Text.Trim();
+        if (local.Length == 0) { TransferStatus.Text = "Choose a PC folder first."; return; }
+        _client.DownloadFolder = local;
+        TransferStatus.Text = $"Downloading {row.Entry.Name}…";
+        _client.DownloadFile(CombinePhone(_phonePath, row.Entry.Name));
+    }
+
+    private async void OnUpload(object sender, RoutedEventArgs e)
+    {
+        if (!_client.IsConnected) { TransferStatus.Text = "Connect to the phone first."; return; }
+        if (_phonePath.Length == 0) { TransferStatus.Text = "Open a phone folder first."; return; }
+
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Send to phone",
+            Multiselect = true,
+            InitialDirectory = Directory.Exists(LocalDirBox.Text.Trim()) ? LocalDirBox.Text.Trim() : "",
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        var files = dlg.FileNames;
+        var target = _phonePath;
+        UploadButton.IsEnabled = false;
+        try
+        {
+            foreach (var file in files)
+            {
+                var name = Path.GetFileName(file);
+                TransferStatus.Text = $"Uploading {name}…";
+                await Task.Run(() => _client.UploadFile(file, target,
+                    (done, total) => Dispatcher.BeginInvoke(() =>
+                        TransferStatus.Text = $"Uploading {name} — {Percent(done, total)}")));
+            }
+            TransferStatus.Text = files.Length == 1
+                ? $"Uploaded {Path.GetFileName(files[0])}."
+                : $"Uploaded {files.Length} files.";
+            BrowsePhone(target); // refresh so the new files show
+        }
+        catch (Exception ex)
+        {
+            TransferStatus.Text = $"Upload failed: {ex.Message}";
+        }
+        finally
+        {
+            UploadButton.IsEnabled = true;
+        }
+    }
+
+    private static string Percent(long done, long total) =>
+        total <= 0 ? "…" : $"{100.0 * done / total:0}%";
+
+    private void OnTransferProgress(string name, long done, long total) =>
+        Dispatcher.BeginInvoke(() => TransferStatus.Text = $"Downloading {name} — {Percent(done, total)}");
+
+    private void OnTransferDone(string path) => Dispatcher.Invoke(() =>
+    {
+        TransferStatus.Text = path.Length > 0 ? $"Saved {Path.GetFileName(path)}" : "Transfer complete.";
+    });
+
+    private void OnTransferError(string message) =>
+        Dispatcher.Invoke(() => TransferStatus.Text = message);
+
+    private void OnBrowseLocal(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "PC folder for transfers",
+            InitialDirectory = Directory.Exists(LocalDirBox.Text.Trim()) ? LocalDirBox.Text.Trim() : "",
+        };
+        if (dlg.ShowDialog() == true) LocalDirBox.Text = dlg.FolderName;
+    }
+
+    private void OnLocalDirChanged(object sender, TextChangedEventArgs e) => SaveFolders();
+
+    // Local and remote folders persist between runs, next to the connection history.
+    private void LoadFolders()
+    {
+        LocalDirBox.Text = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        try
+        {
+            if (!File.Exists(SettingsPath)) return;
+            var lines = File.ReadAllLines(SettingsPath);
+            if (lines.Length > 0 && lines[0].Trim().Length > 0) LocalDirBox.Text = lines[0].Trim();
+            if (lines.Length > 1 && lines[1].Trim().Length > 0) RemoteDirBox.Text = lines[1].Trim();
+        }
+        catch { /* best-effort */ }
+    }
+
+    private void SaveFolders()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
+            File.WriteAllLines(SettingsPath, new[] { LocalDirBox.Text.Trim(), RemoteDirBox.Text.Trim() });
+        }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>A phone file/folder as shown in the list.</summary>
+    private sealed record FileRow(PhoneEntry Entry)
+    {
+        public override string ToString() => Entry.IsDirectory
+            ? $"📁  {Entry.Name}"
+            : $"📄  {Entry.Name}    {Human(Entry.Size)}";
+
+        private static string Human(long bytes) => bytes switch
+        {
+            < 1024 => $"{bytes} B",
+            < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+            < 1024L * 1024 * 1024 => $"{bytes / (1024.0 * 1024):0.#} MB",
+            _ => $"{bytes / (1024.0 * 1024 * 1024):0.##} GB",
+        };
     }
 
     // ---------------- Navigation buttons ----------------

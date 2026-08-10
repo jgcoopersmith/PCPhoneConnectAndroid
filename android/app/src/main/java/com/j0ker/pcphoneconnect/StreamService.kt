@@ -66,6 +66,9 @@ class StreamService : Service() {
     private var reusableBitmap: Bitmap? = null
     private val main = Handler(Looper.getMainLooper())
 
+    // File server for the currently connected PC, if any.
+    @Volatile private var fileTransfer: FileTransfer? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -223,8 +226,23 @@ class StreamService : Service() {
         val output = DataOutputStream(socket.getOutputStream().buffered(64 * 1024))
         val input = DataInputStream(BufferedInputStream(socket.getInputStream()))
 
+        // Frames and file responses share one socket, so every write is framed
+        // under this lock to keep messages from interleaving.
+        val outLock = Any()
+        fun sendFramed(type: Int, payload: ByteArray) {
+            synchronized(outLock) {
+                output.writeByte(type)
+                output.writeInt(payload.size)
+                output.write(payload)
+                output.flush()
+            }
+        }
+
+        val files = FileTransfer(::sendFramed)
+        fileTransfer = files
+
         // Reader thread for control messages.
-        val reader = Thread({ controlLoop(input) }, "pc-control")
+        val reader = Thread({ controlLoop(input, files) }, "pc-control")
         reader.isDaemon = true
         reader.start()
 
@@ -238,12 +256,11 @@ class StreamService : Service() {
                 .put("h", realHeight)
                 .put("sw", streamWidth)
                 .put("sh", streamHeight)
+                .put("files", files.hasAccess)
+                .put("root", files.defaultRoot())
                 .toString()
                 .toByteArray(Charsets.UTF_8)
-            output.writeByte(TYPE_HEADER)
-            output.writeInt(header.size)
-            output.write(header)
-            output.flush()
+            sendFramed(TYPE_HEADER, header)
 
             var lastSeq = -1L
             val frameIntervalMs = 1000L / TARGET_FPS
@@ -252,10 +269,7 @@ class StreamService : Service() {
                 if (seq != lastSeq) {
                     val jpeg = latestJpeg.get()
                     if (jpeg != null) {
-                        output.writeByte(TYPE_FRAME)
-                        output.writeInt(jpeg.size)
-                        output.write(jpeg)
-                        output.flush()
+                        sendFramed(TYPE_FRAME, jpeg)
                         lastSeq = seq
                     }
                 }
@@ -264,25 +278,53 @@ class StreamService : Service() {
         } catch (t: Throwable) {
             // client gone
         } finally {
+            files.shutdown()
+            if (fileTransfer === files) fileTransfer = null
             try { socket.close() } catch (_: Throwable) {}
         }
     }
 
-    private fun controlLoop(input: DataInputStream) {
+    /**
+     * PC -> phone messages are [1-byte type][4-byte length][payload], where type
+     * 0 is a UTF-8 JSON control message and type 1 is a raw chunk of a file the
+     * PC is uploading.
+     */
+    private fun controlLoop(input: DataInputStream, files: FileTransfer) {
         try {
             while (running) {
+                val type = input.read()
+                if (type < 0) break
                 val len = input.readInt()
-                if (len <= 0 || len > 1_000_000) break
+                if (len < 0 || len > MAX_INBOUND) break
                 val buf = ByteArray(len)
                 input.readFully(buf)
-                dispatchControl(String(buf, Charsets.UTF_8))
+                when (type) {
+                    IN_JSON -> dispatchControl(String(buf, Charsets.UTF_8), files)
+                    IN_FILEDATA -> files.feed(buf)
+                }
             }
         } catch (t: Throwable) {
             // socket closed
         }
     }
 
-    private fun dispatchControl(json: String) {
+    private fun dispatchControl(json: String, files: FileTransfer) {
+        // File operations don't need the accessibility service, so handle them
+        // before the input-injection guard below.
+        try {
+            val o = JSONObject(json)
+            when (o.optString("t")) {
+                "ls" -> { files.list(o.optString("path").ifBlank { null }); return }
+                "get" -> { files.get(o.optString("path")); return }
+                "put" -> {
+                    files.beginPut(o.optString("dir"), o.optString("name"), o.optLong("size"))
+                    return
+                }
+            }
+        } catch (t: Throwable) {
+            return
+        }
+
         val svc = ControlAccessibilityService.instance ?: return
         try {
             val o = JSONObject(json)
@@ -462,6 +504,10 @@ class StreamService : Service() {
 
         private const val TYPE_HEADER = 0
         private const val TYPE_FRAME = 1
+        // Inbound (PC -> phone) message types.
+        private const val IN_JSON = 0
+        private const val IN_FILEDATA = 1
+        private const val MAX_INBOUND = 8 * 1024 * 1024
 
         @Volatile
         var isRunning = false

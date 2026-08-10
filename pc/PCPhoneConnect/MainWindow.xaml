@@ -48,7 +48,8 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="16">
+  <Grid>
+   <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -171,5 +172,119 @@
         <!-- Status bar -->
         <TextBlock x:Name="StatusText" Grid.Row="4" Text="Enter the phone's IP and port, then Connect."
                    TextWrapping="Wrap" Margin="2,6,0,0" FontSize="12" />
-    </Grid>
+   </Grid>
+
+   <!-- Side tab: opens the file transfer panel -->
+   <Button x:Name="FilesTab" HorizontalAlignment="Right" VerticalAlignment="Center"
+           Width="30" Height="120" Margin="0" Padding="0" Click="OnToggleFiles"
+           ToolTip="File transfer">
+       <Button.LayoutTransform>
+           <RotateTransform Angle="0" />
+       </Button.LayoutTransform>
+       <TextBlock Text="FILES" FontSize="12" FontWeight="SemiBold" Foreground="#E6ECF5">
+           <TextBlock.LayoutTransform>
+               <RotateTransform Angle="90" />
+           </TextBlock.LayoutTransform>
+       </TextBlock>
+   </Button>
+
+   <!-- File transfer panel -->
+   <Border x:Name="FilePanel" Visibility="Collapsed"
+           HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="400"
+           Background="#111C31" BorderBrush="#2B3B5E" BorderThickness="1,0,0,0">
+       <Grid Margin="14">
+           <Grid.RowDefinitions>
+               <RowDefinition Height="Auto" />
+               <RowDefinition Height="Auto" />
+               <RowDefinition Height="Auto" />
+               <RowDefinition Height="*" />
+               <RowDefinition Height="Auto" />
+               <RowDefinition Height="Auto" />
+           </Grid.RowDefinitions>
+
+           <!-- Title -->
+           <Grid Grid.Row="0" Margin="0,0,0,10">
+               <TextBlock Text="File transfer" Foreground="#E6ECF5"
+                          FontSize="17" FontWeight="Bold" VerticalAlignment="Center" />
+               <Button Content="✕" Width="30" Padding="0" HorizontalAlignment="Right"
+                       Click="OnToggleFiles" />
+           </Grid>
+
+           <!-- Local (PC) folder -->
+           <StackPanel Grid.Row="1" Margin="0,0,0,10">
+               <TextBlock Text="PC folder (downloads land here)" FontSize="11" Margin="2,0,0,4" />
+               <Grid>
+                   <Grid.ColumnDefinitions>
+                       <ColumnDefinition Width="*" />
+                       <ColumnDefinition Width="Auto" />
+                   </Grid.ColumnDefinitions>
+                   <TextBox x:Name="LocalDirBox" Grid.Column="0" Margin="0,0,6,0"
+                            TextChanged="OnLocalDirChanged" />
+                   <Button Grid.Column="1" Content="Browse…" Click="OnBrowseLocal" Margin="0" />
+               </Grid>
+           </StackPanel>
+
+           <!-- Remote (phone) folder -->
+           <StackPanel Grid.Row="2" Margin="0,0,0,8">
+               <TextBlock Text="Phone folder (uploads land here)" FontSize="11" Margin="2,0,0,4" />
+               <Grid>
+                   <Grid.ColumnDefinitions>
+                       <ColumnDefinition Width="Auto" />
+                       <ColumnDefinition Width="*" />
+                       <ColumnDefinition Width="Auto" />
+                   </Grid.ColumnDefinitions>
+                   <Button Grid.Column="0" Content="↑" Width="30" Padding="0" Margin="0,0,6,0"
+                           Click="OnPhoneUp" ToolTip="Up one folder" />
+                   <TextBox x:Name="RemoteDirBox" Grid.Column="1" Margin="0,0,6,0"
+                            KeyDown="OnRemoteDirKey" />
+                   <Button Grid.Column="2" Content="Go" Click="OnRemoteGo" Margin="0" />
+               </Grid>
+           </StackPanel>
+
+           <!-- Phone file list -->
+           <Border Grid.Row="3" Background="#0B1424" BorderBrush="#2B3B5E" BorderThickness="1"
+                   CornerRadius="6">
+               <ListBox x:Name="PhoneFiles" Background="Transparent" BorderThickness="0"
+                        Foreground="#E6ECF5" MouseDoubleClick="OnPhoneFileOpen">
+                   <ListBox.ItemContainerStyle>
+                       <Style TargetType="ListBoxItem">
+                           <Setter Property="Padding" Value="8,5" />
+                           <Setter Property="Foreground" Value="#E6ECF5" />
+                           <Setter Property="Template">
+                               <Setter.Value>
+                                   <ControlTemplate TargetType="ListBoxItem">
+                                       <Border x:Name="fb" Background="Transparent" CornerRadius="4"
+                                               Padding="{TemplateBinding Padding}">
+                                           <ContentPresenter />
+                                       </Border>
+                                       <ControlTemplate.Triggers>
+                                           <Trigger Property="IsMouseOver" Value="True">
+                                               <Setter TargetName="fb" Property="Background" Value="#22314F" />
+                                           </Trigger>
+                                           <Trigger Property="IsSelected" Value="True">
+                                               <Setter TargetName="fb" Property="Background" Value="#2B3B5E" />
+                                           </Trigger>
+                                       </ControlTemplate.Triggers>
+                                   </ControlTemplate>
+                               </Setter.Value>
+                           </Setter>
+                       </Style>
+                   </ListBox.ItemContainerStyle>
+               </ListBox>
+           </Border>
+
+           <!-- Transfer buttons -->
+           <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Center"
+                       Margin="0,10,0,0">
+               <Button x:Name="DownloadButton" Content="⬇ Download" Click="OnDownload"
+                       ToolTip="Copy the selected phone file to the PC folder" />
+               <Button x:Name="UploadButton" Content="⬆ Upload…" Click="OnUpload"
+                       ToolTip="Send a PC file to the phone folder" />
+           </StackPanel>
+
+           <TextBlock x:Name="TransferStatus" Grid.Row="5" Margin="2,10,0,0" FontSize="11"
+                      TextWrapping="Wrap" Text="Double-click a folder to open it." />
+       </Grid>
+   </Border>
+  </Grid>
 </Window>

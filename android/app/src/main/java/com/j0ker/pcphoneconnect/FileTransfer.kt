@@ -80,6 +80,57 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
         }
     }
 
+    /**
+     * Recursively enumerate a folder so the PC can pull it in one action. Paths
+     * come back relative to [rawPath] so the PC can rebuild the same structure.
+     */
+    fun tree(rawPath: String) = worker.execute {
+        try {
+            val requested = File(rawPath)
+            if (!requested.isDirectory) {
+                error("Not a folder: $rawPath")
+                return@execute
+            }
+            // Resolve first: shared storage is reached through symlinks (/sdcard ->
+            // /storage/emulated/0), so compare canonical paths or the walk escapes
+            // — or, if the root itself looks like a link, never starts.
+            val root = runCatching { requested.canonicalFile }.getOrDefault(requested)
+            val rootPath = root.absolutePath
+
+            val files = JSONArray()
+            var total = 0L
+            var count = 0
+            root.walkTopDown()
+                .onEnter { dir ->
+                    // Don't follow links that point outside the folder being copied.
+                    val real = runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
+                    real == rootPath || real.startsWith("$rootPath/")
+                }
+                .forEach { f ->
+                    if (count >= MAX_TREE_FILES) return@forEach
+                    if (f.isFile) {
+                        val rel = f.absolutePath.removePrefix(rootPath).trimStart('/')
+                        if (rel.isNotEmpty()) {
+                            files.put(JSONObject().put("p", rel).put("s", f.length()))
+                            total += f.length()
+                            count++
+                        }
+                    }
+                }
+            respond(
+                JSONObject()
+                    .put("r", "tree")
+                    .put("root", rootPath)
+                    .put("name", root.name)
+                    .put("bytes", total)
+                    .put("truncated", count >= MAX_TREE_FILES)
+                    .put("files", files)
+            )
+        } catch (t: Throwable) {
+            error("Folder scan failed: ${t.message}")
+        }
+    }
+
     // ---------------- Download: phone -> PC ----------------
 
     fun get(path: String) = worker.execute {
@@ -188,5 +239,7 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
         const val TYPE_RESPONSE = 2
         const val TYPE_FILEDATA = 3
         private const val CHUNK = 128 * 1024
+        // Guard against pulling an unbounded tree (e.g. the storage root).
+        private const val MAX_TREE_FILES = 5000
     }
 }

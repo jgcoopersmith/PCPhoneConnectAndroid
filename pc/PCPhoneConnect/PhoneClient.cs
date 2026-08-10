@@ -113,6 +113,10 @@ public sealed class PhoneClient : IDisposable
     private long _downloadTotal;
     private string? _downloadPath;
 
+    // Pending awaits for the async (folder-walking) transfer paths.
+    private TaskCompletionSource<string>? _getTcs;
+    private TaskCompletionSource<FolderTree>? _treeTcs;
+
     /// <summary>Folder the next download is written into. Set before DownloadFile.</summary>
     public string DownloadFolder { get; set; } =
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
@@ -150,6 +154,26 @@ public sealed class PhoneClient : IDisposable
                         entries));
                     break;
 
+                case "tree":
+                    var treeFiles = new List<TreeFile>();
+                    if (root.TryGetProperty("files", out var tf))
+                    {
+                        foreach (var e in tf.EnumerateArray())
+                        {
+                            treeFiles.Add(new TreeFile(
+                                e.GetProperty("p").GetString() ?? "",
+                                e.TryGetProperty("s", out var ts) ? ts.GetInt64() : 0));
+                        }
+                    }
+                    var tree = new FolderTree(
+                        root.GetProperty("root").GetString() ?? "",
+                        root.TryGetProperty("name", out var tn) ? tn.GetString() ?? "" : "",
+                        root.TryGetProperty("bytes", out var tb) ? tb.GetInt64() : 0,
+                        root.TryGetProperty("truncated", out var tr) && tr.GetBoolean(),
+                        treeFiles);
+                    Interlocked.Exchange(ref _treeTcs, null)?.TrySetResult(tree);
+                    break;
+
                 case "getstart":
                     BeginDownload(
                         root.GetProperty("name").GetString() ?? "file",
@@ -167,8 +191,12 @@ public sealed class PhoneClient : IDisposable
 
                 case "err":
                     AbortDownload();
-                    TransferError?.Invoke(root.TryGetProperty("m", out var m)
-                        ? m.GetString() ?? "Unknown error" : "Unknown error");
+                    var msg = root.TryGetProperty("m", out var m)
+                        ? m.GetString() ?? "Unknown error" : "Unknown error";
+                    // Fail whichever async operation is waiting, then report.
+                    Interlocked.Exchange(ref _treeTcs, null)?.TrySetException(new IOException(msg));
+                    Interlocked.Exchange(ref _getTcs, null)?.TrySetException(new IOException(msg));
+                    TransferError?.Invoke(msg);
                     break;
             }
         }
@@ -224,6 +252,7 @@ public sealed class PhoneClient : IDisposable
         try { _downloadStream?.Dispose(); } catch { }
         _downloadStream = null;
         _downloadPath = null;
+        Interlocked.Exchange(ref _getTcs, null)?.TrySetResult(path ?? "");
         if (path != null) TransferDone?.Invoke(path);
     }
 
@@ -325,9 +354,33 @@ public sealed class PhoneClient : IDisposable
     public void ListFolder(string? path) =>
         Send("{\"t\":\"ls\",\"path\":" + JsonSerializer.Serialize(path ?? "") + "}");
 
-    /// <summary>Ask the phone to send a file (arrives via FileStarted/FileDone).</summary>
+    /// <summary>Ask the phone to send a file (arrives via TransferProgress/Done).</summary>
     public void DownloadFile(string phonePath) =>
         Send("{\"t\":\"get\",\"path\":" + JsonSerializer.Serialize(phonePath) + "}");
+
+    /// <summary>Recursively enumerate a phone folder.</summary>
+    public Task<FolderTree> GetTreeAsync(string phonePath)
+    {
+        var tcs = new TaskCompletionSource<FolderTree>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _treeTcs = tcs;
+        Send("{\"t\":\"tree\",\"path\":" + JsonSerializer.Serialize(phonePath) + "}");
+        return tcs.Task;
+    }
+
+    /// <summary>
+    /// Download one file into <paramref name="localFolder"/> and complete when the
+    /// phone signals the end of the file, so a folder can be pulled sequentially.
+    /// </summary>
+    public Task<string> DownloadFileAsync(string phonePath, string localFolder)
+    {
+        var tcs = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _getTcs = tcs;
+        DownloadFolder = localFolder;
+        DownloadFile(phonePath);
+        return tcs.Task;
+    }
 
     /// <summary>Upload a local file into <paramref name="phoneDir"/> on the phone.</summary>
     public void UploadFile(string localPath, string phoneDir, Action<long, long>? progress = null)
@@ -400,6 +453,12 @@ public record DeviceHeader(
 
 /// <summary>One entry in a phone folder listing.</summary>
 public record PhoneEntry(string Name, bool IsDirectory, long Size);
+
+/// <summary>One file inside a recursively listed folder, path relative to its root.</summary>
+public record TreeFile(string RelativePath, long Size);
+
+/// <summary>A recursively listed phone folder.</summary>
+public record FolderTree(string Root, string Name, long Bytes, bool Truncated, List<TreeFile> Files);
 
 /// <summary>A phone folder: its path, its parent (null at the root) and contents.</summary>
 public record FolderListing(string Path, string? Parent, List<PhoneEntry> Entries);

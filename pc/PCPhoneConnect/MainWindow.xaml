@@ -274,12 +274,17 @@
            </Border>
 
            <!-- Transfer buttons -->
-           <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Center"
-                       Margin="0,10,0,0">
-               <Button x:Name="DownloadButton" Content="⬇ Download" Click="OnDownload"
-                       ToolTip="Copy the selected phone file to the PC folder" />
-               <Button x:Name="UploadButton" Content="⬆ Upload…" Click="OnUpload"
-                       ToolTip="Send a PC file to the phone folder" />
+           <StackPanel Grid.Row="4" HorizontalAlignment="Center" Margin="0,10,0,0">
+               <Button x:Name="DownloadButton" Content="⬇  Download to PC" Click="OnDownload"
+                       Margin="0,0,0,6"
+                       ToolTip="Copy the selected phone file or folder to the PC folder" />
+               <StackPanel Orientation="Horizontal">
+                   <Button x:Name="UploadButton" Content="⬆  Files to phone…" Click="OnUpload"
+                           ToolTip="Send PC files to the phone folder" />
+                   <Button x:Name="UploadFolderButton" Content="⬆  Folder to phone…"
+                           Click="OnUploadFolder"
+                           ToolTip="Send a whole PC folder to the phone folder" />
+               </StackPanel>
            </StackPanel>
 
            <TextBlock x:Name="TransferStatus" Grid.Row="5" Margin="2,10,0,0" FontSize="11"

@@ -561,19 +561,128 @@ public partial class MainWindow : Window
     private static string CombinePhone(string dir, string name) =>
         dir.EndsWith('/') ? dir + name : dir + "/" + name;
 
-    private void OnDownload(object sender, RoutedEventArgs e)
+    private async void OnDownload(object sender, RoutedEventArgs e)
     {
         if (!_client.IsConnected) { TransferStatus.Text = "Connect to the phone first."; return; }
-        if (PhoneFiles.SelectedItem is not FileRow row || row.Entry.IsDirectory)
+        if (PhoneFiles.SelectedItem is not FileRow row)
         {
-            TransferStatus.Text = "Select a file on the phone to download.";
+            TransferStatus.Text = "Select a file or folder on the phone to download.";
             return;
         }
         var local = LocalDirBox.Text.Trim();
         if (local.Length == 0) { TransferStatus.Text = "Choose a PC folder first."; return; }
-        _client.DownloadFolder = local;
-        TransferStatus.Text = $"Downloading {row.Entry.Name}…";
-        _client.DownloadFile(CombinePhone(_phonePath, row.Entry.Name));
+
+        var phonePath = CombinePhone(_phonePath, row.Entry.Name);
+
+        if (!row.Entry.IsDirectory)
+        {
+            _client.DownloadFolder = local;
+            TransferStatus.Text = $"Downloading {row.Entry.Name}…";
+            _client.DownloadFile(phonePath);
+            return;
+        }
+
+        // Folder: enumerate on the phone, then pull each file into a mirrored tree.
+        SetTransferButtons(false);
+        try
+        {
+            TransferStatus.Text = $"Scanning {row.Entry.Name}…";
+            var tree = await _client.GetTreeAsync(phonePath);
+            if (tree.Files.Count == 0)
+            {
+                Directory.CreateDirectory(Path.Combine(local, row.Entry.Name));
+                TransferStatus.Text = $"{row.Entry.Name} is empty — created the folder.";
+                return;
+            }
+
+            var destRoot = Path.Combine(local, SafeName(row.Entry.Name));
+            int done = 0;
+            foreach (var file in tree.Files)
+            {
+                var rel = file.RelativePath.Replace('/', Path.DirectorySeparatorChar);
+                var destDir = Path.GetDirectoryName(Path.Combine(destRoot, rel)) ?? destRoot;
+                Directory.CreateDirectory(destDir);
+                TransferStatus.Text =
+                    $"Downloading {row.Entry.Name} — {done + 1}/{tree.Files.Count}: {Path.GetFileName(rel)}";
+                await _client.DownloadFileAsync(CombinePhone(phonePath, file.RelativePath), destDir);
+                done++;
+            }
+            TransferStatus.Text = tree.Truncated
+                ? $"Downloaded {done} files (list was capped at 5000)."
+                : $"Downloaded {done} files into {row.Entry.Name}.";
+        }
+        catch (Exception ex)
+        {
+            TransferStatus.Text = $"Folder download failed: {ex.Message}";
+        }
+        finally
+        {
+            SetTransferButtons(true);
+        }
+    }
+
+    private void SetTransferButtons(bool on)
+    {
+        DownloadButton.IsEnabled = on;
+        UploadButton.IsEnabled = on;
+        UploadFolderButton.IsEnabled = on;
+    }
+
+    private static string SafeName(string name)
+    {
+        foreach (var c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
+        return name;
+    }
+
+    private async void OnUploadFolder(object sender, RoutedEventArgs e)
+    {
+        if (!_client.IsConnected) { TransferStatus.Text = "Connect to the phone first."; return; }
+        if (_phonePath.Length == 0) { TransferStatus.Text = "Open a phone folder first."; return; }
+
+        var dlg = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Send folder to phone",
+            InitialDirectory = Directory.Exists(LocalDirBox.Text.Trim()) ? LocalDirBox.Text.Trim() : "",
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        var sourceRoot = dlg.FolderName;
+        var folderName = new DirectoryInfo(sourceRoot).Name;
+        var targetRoot = CombinePhone(_phonePath, folderName);
+
+        SetTransferButtons(false);
+        try
+        {
+            var files = Directory.GetFiles(sourceRoot, "*", SearchOption.AllDirectories);
+            if (files.Length == 0)
+            {
+                TransferStatus.Text = $"{folderName} has no files to send.";
+                return;
+            }
+            int done = 0;
+            foreach (var file in files)
+            {
+                var rel = Path.GetRelativePath(sourceRoot, file);
+                var relDir = Path.GetDirectoryName(rel);
+                var phoneDir = string.IsNullOrEmpty(relDir)
+                    ? targetRoot
+                    : CombinePhone(targetRoot, relDir.Replace(Path.DirectorySeparatorChar, '/'));
+                var label = Path.GetFileName(file);
+                TransferStatus.Text = $"Uploading {folderName} — {done + 1}/{files.Length}: {label}";
+                await Task.Run(() => _client.UploadFile(file, phoneDir));
+                done++;
+            }
+            TransferStatus.Text = $"Uploaded {done} files into {folderName}.";
+            BrowsePhone(_phonePath);
+        }
+        catch (Exception ex)
+        {
+            TransferStatus.Text = $"Folder upload failed: {ex.Message}";
+        }
+        finally
+        {
+            SetTransferButtons(true);
+        }
     }
 
     private async void OnUpload(object sender, RoutedEventArgs e)
@@ -591,7 +700,7 @@ public partial class MainWindow : Window
 
         var files = dlg.FileNames;
         var target = _phonePath;
-        UploadButton.IsEnabled = false;
+        SetTransferButtons(false);
         try
         {
             foreach (var file in files)
@@ -613,7 +722,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            UploadButton.IsEnabled = true;
+            SetTransferButtons(true);
         }
     }
 

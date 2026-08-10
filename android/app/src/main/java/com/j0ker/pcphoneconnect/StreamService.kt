@@ -315,6 +315,7 @@ class StreamService : Service() {
             val o = JSONObject(json)
             when (o.optString("t")) {
                 "ls" -> { files.list(o.optString("path").ifBlank { null }); return }
+                "tree" -> { files.tree(o.optString("path")); return }
                 "get" -> { files.get(o.optString("path")); return }
                 "put" -> {
                     files.beginPut(o.optString("dir"), o.optString("name"), o.optLong("size"))

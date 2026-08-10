@@ -10,8 +10,9 @@ namespace PCPhoneConnect;
 /// a stream of JPEG frames, and sends back length-prefixed JSON control messages.
 ///
 /// Wire format (phone -> PC): [1-byte type][4-byte big-endian length][payload]
-///   type 0 = UTF-8 JSON header, type 1 = JPEG frame.
-/// Wire format (PC -> phone): [4-byte big-endian length][UTF-8 JSON].
+///   type 0 = JSON header, 1 = JPEG frame, 2 = JSON file response, 3 = file chunk.
+/// Wire format (PC -> phone): [1-byte type][4-byte big-endian length][payload]
+///   type 0 = UTF-8 JSON control, 1 = raw upload chunk.
 /// </summary>
 public sealed class PhoneClient : IDisposable
 {
@@ -49,7 +50,14 @@ public sealed class PhoneClient : IDisposable
             tcp.Close();
             throw ae.InnerException ?? ae; // surface the real SocketException message
         }
+        // Bound writes so a wedged phone can't block a sender indefinitely, and
+        // enable keepalive so a device that vanishes without a FIN is detected
+        // instead of leaving the client stuck in "connected".
+        tcp.SendTimeout = 15000;
+        try { tcp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true); }
+        catch { /* not fatal */ }
         _tcp = tcp;
+        _disconnectReported = 0;
         _stream = tcp.GetStream();
         _running = true;
         var stream = _stream;
@@ -92,18 +100,35 @@ public sealed class PhoneClient : IDisposable
         }
         catch (Exception ex)
         {
-            if (_running && ReferenceEquals(_stream, stream)) Disconnected?.Invoke(ex.Message);
+            if (ReferenceEquals(_stream, stream)) ReportDisconnect(ex.Message);
         }
         finally
         {
             // Only report the disconnect if this is still the active connection —
             // a stale read thread from a replaced connection must stay silent.
-            if (_running && ReferenceEquals(_stream, stream))
-            {
-                _running = false;
-                Disconnected?.Invoke("Connection closed");
-            }
+            if (ReferenceEquals(_stream, stream)) ReportDisconnect("Connection closed");
         }
+    }
+
+    /// <summary>
+    /// Tear down once per connection. Fires Disconnected a single time so the real
+    /// socket error isn't overwritten by a follow-up "Connection closed", and
+    /// faults anything awaiting a transfer so folder copies don't hang forever.
+    /// </summary>
+    private void ReportDisconnect(string reason)
+    {
+        if (Interlocked.Exchange(ref _disconnectReported, 1) != 0) return;
+        _running = false;
+        FailPendingTransfers(reason);
+        Disconnected?.Invoke(reason);
+    }
+
+    private void FailPendingTransfers(string reason)
+    {
+        AbortDownload();
+        var ex = new IOException(reason);
+        Interlocked.Exchange(ref _treeTcs, null)?.TrySetException(ex);
+        Interlocked.Exchange(ref _getTcs, null)?.TrySetException(ex);
     }
 
     // ---- Inbound file responses ----
@@ -116,6 +141,7 @@ public sealed class PhoneClient : IDisposable
     // Pending awaits for the async (folder-walking) transfer paths.
     private TaskCompletionSource<string>? _getTcs;
     private TaskCompletionSource<FolderTree>? _treeTcs;
+    private int _disconnectReported;
 
     /// <summary>Folder the next download is written into. Set before DownloadFile.</summary>
     public string DownloadFolder { get; set; } =
@@ -249,11 +275,29 @@ public sealed class PhoneClient : IDisposable
     private void FinishDownload()
     {
         var path = _downloadPath;
+        var short_ = _downloadRemaining > 0;
         try { _downloadStream?.Dispose(); } catch { }
         _downloadStream = null;
         _downloadPath = null;
-        Interlocked.Exchange(ref _getTcs, null)?.TrySetResult(path ?? "");
-        if (path != null) TransferDone?.Invoke(path);
+
+        if (path == null)
+        {
+            // getdone with nothing open: the file never started or was aborted.
+            Interlocked.Exchange(ref _getTcs, null)
+                ?.TrySetException(new IOException("Download did not complete."));
+            return;
+        }
+        if (short_)
+        {
+            // Truncated transfer — don't pass a partial file off as complete.
+            var msg = $"{Path.GetFileName(path)} is incomplete ({_downloadRemaining} bytes missing).";
+            _downloadRemaining = 0;
+            Interlocked.Exchange(ref _getTcs, null)?.TrySetException(new IOException(msg));
+            TransferError?.Invoke(msg);
+            return;
+        }
+        Interlocked.Exchange(ref _getTcs, null)?.TrySetResult(path);
+        TransferDone?.Invoke(path);
     }
 
     private void AbortDownload()
@@ -376,7 +420,12 @@ public sealed class PhoneClient : IDisposable
     {
         var tcs = new TaskCompletionSource<string>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        _getTcs = tcs;
+        // DownloadFolder and the pending await are single global slots, so a second
+        // concurrent download would misfile the in-flight file and complete the
+        // wrong await. Only one at a time.
+        if (Interlocked.CompareExchange(ref _getTcs, tcs, null) != null)
+            return Task.FromException<string>(
+                new InvalidOperationException("Another download is already in progress."));
         DownloadFolder = localFolder;
         DownloadFile(phonePath);
         return tcs.Task;
@@ -386,9 +435,13 @@ public sealed class PhoneClient : IDisposable
     public void UploadFile(string localPath, string phoneDir, Action<long, long>? progress = null)
     {
         var info = new FileInfo(localPath);
-        Send("{\"t\":\"put\",\"dir\":" + JsonSerializer.Serialize(phoneDir) +
-             ",\"name\":" + JsonSerializer.Serialize(info.Name) +
-             ",\"size\":" + info.Length + "}");
+        if (!SendFramed(OutJson, Encoding.UTF8.GetBytes(
+                "{\"t\":\"put\",\"dir\":" + JsonSerializer.Serialize(phoneDir) +
+                ",\"name\":" + JsonSerializer.Serialize(info.Name) +
+                ",\"size\":" + info.Length + "}")))
+        {
+            throw new IOException("Connection lost before the upload started.");
+        }
 
         using var fs = info.OpenRead();
         var buf = new byte[ChunkSize];
@@ -397,10 +450,15 @@ public sealed class PhoneClient : IDisposable
         {
             int n = fs.Read(buf, 0, buf.Length);
             if (n <= 0) break;
-            SendFramed(OutFileData, n == buf.Length ? buf : buf[..n]);
+            if (!SendFramed(OutFileData, n == buf.Length ? buf : buf[..n]))
+                throw new IOException($"Connection lost after {sent} of {info.Length} bytes.");
             sent += n;
             progress?.Invoke(sent, info.Length);
         }
+        // The declared size is what the phone waits for; a file that shrank
+        // mid-read would otherwise leave the phone's writer hanging.
+        if (sent != info.Length)
+            throw new IOException($"{info.Name} changed while sending ({sent} of {info.Length} bytes).");
     }
 
     private static string F(double v) =>
@@ -408,11 +466,15 @@ public sealed class PhoneClient : IDisposable
 
     private void Send(string json) => SendFramed(OutJson, Encoding.UTF8.GetBytes(json));
 
-    /// <summary>PC -> phone frame: [1-byte type][4-byte big-endian length][payload].</summary>
-    private void SendFramed(byte type, byte[] body)
+    /// <summary>
+    /// PC -> phone frame: [1-byte type][4-byte big-endian length][payload].
+    /// Returns false if the frame could not be written, so file transfers can
+    /// fail loudly instead of reporting a phantom success.
+    /// </summary>
+    private bool SendFramed(byte type, byte[] body)
     {
         var stream = _stream;
-        if (stream == null || !_running) return;
+        if (stream == null || !_running) return false;
         var frame = new byte[5 + body.Length];
         frame[0] = type;
         frame[1] = (byte)((body.Length >> 24) & 0xFF);
@@ -427,10 +489,13 @@ public sealed class PhoneClient : IDisposable
                 stream.Write(frame, 0, frame.Length);
                 stream.Flush();
             }
+            return true;
         }
         catch
         {
-            // ignore transient write failures; the read loop reports disconnects
+            // The read loop reports the disconnect; callers that care (file
+            // transfer) surface the failure via the false return.
+            return false;
         }
     }
 
@@ -441,6 +506,9 @@ public sealed class PhoneClient : IDisposable
         try { _tcp?.Close(); } catch { }
         _stream = null;
         _tcp = null;
+        // Close any half-written download and release awaiters, otherwise a later
+        // download appends to the stale handle and folder pulls hang forever.
+        FailPendingTransfers("Disconnected.");
     }
 
     public void Dispose() => Disconnect();

@@ -6,7 +6,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.util.concurrent.Executors
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * Serves the phone's filesystem to the paired PC: directory listings, downloads
@@ -19,14 +21,24 @@ import java.util.concurrent.Executors
  */
 class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
 
-    private val worker = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "pc-files").apply { isDaemon = true }
-    }
+    /**
+     * Bounded queue with a caller-runs policy: the socket reader blocks once the
+     * worker falls behind instead of buffering the whole upload in RAM. An
+     * unbounded queue let a fast PC push a multi-GB file straight onto the heap.
+     */
+    private val worker = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue(QUEUE_DEPTH),
+        { r -> Thread(r, "pc-files").apply { isDaemon = true } },
+        ThreadPoolExecutor.CallerRunsPolicy()
+    )
 
     // In-progress upload from the PC.
     private var uploadStream: FileOutputStream? = null
     private var uploadRemaining = 0L
     private var uploadPath: String? = null
+    // Bytes still to swallow from an upload whose beginPut failed.
+    private var discardRemaining = 0L
 
     /** True once the user has granted broad filesystem access. */
     val hasAccess: Boolean
@@ -40,7 +52,12 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
 
     fun shutdown() {
         worker.shutdownNow()
+        // Wait briefly so an in-flight beginPut can't open a stream after this
+        // point and leak it; then discard whatever partial upload remains.
+        runCatching { worker.awaitTermination(500, TimeUnit.MILLISECONDS) }
+        val path = uploadPath
         closeUpload()
+        if (path != null) runCatching { File(path).delete() }
     }
 
     // ---------------- Listing ----------------
@@ -53,12 +70,17 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
                 return@execute
             }
             val kids = dir.listFiles()
-            if (kids == null && !hasAccess) {
-                error("Grant \"All files access\" in the phone app to browse files.")
+            if (kids == null) {
+                // listFiles() returns null for "cannot read", which is not the same
+                // as an empty folder — report it instead of showing nothing.
+                error(
+                    if (hasAccess) "Cannot read ${dir.absolutePath} (permission denied)."
+                    else "Grant \"All files access\" in the phone app to browse files."
+                )
                 return@execute
             }
             val entries = JSONArray()
-            kids.orEmpty()
+            kids
                 .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
                 .forEach { f ->
                     entries.put(
@@ -100,23 +122,25 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
             val files = JSONArray()
             var total = 0L
             var count = 0
-            root.walkTopDown()
+            // Iterate explicitly: inside forEach, `return@forEach` is a continue, so
+            // the old cap kept walking the entire tree (minutes on a big folder)
+            // while only recording the first N entries.
+            val walker = root.walkTopDown()
                 .onEnter { dir ->
                     // Don't follow links that point outside the folder being copied.
                     val real = runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
                     real == rootPath || real.startsWith("$rootPath/")
                 }
-                .forEach { f ->
-                    if (count >= MAX_TREE_FILES) return@forEach
-                    if (f.isFile) {
-                        val rel = f.absolutePath.removePrefix(rootPath).trimStart('/')
-                        if (rel.isNotEmpty()) {
-                            files.put(JSONObject().put("p", rel).put("s", f.length()))
-                            total += f.length()
-                            count++
-                        }
-                    }
-                }
+                .iterator()
+            while (walker.hasNext() && count < MAX_TREE_FILES) {
+                val f = walker.next()
+                if (!f.isFile) continue
+                val rel = f.absolutePath.removePrefix(rootPath).trimStart('/')
+                if (rel.isEmpty()) continue
+                files.put(JSONObject().put("p", rel).put("s", f.length()))
+                total += f.length()
+                count++
+            }
             respond(
                 JSONObject()
                     .put("r", "tree")
@@ -140,13 +164,15 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
                 error("Not a file: $path")
                 return@execute
             }
-            respond(
-                JSONObject()
-                    .put("r", "getstart")
-                    .put("name", file.name)
-                    .put("size", file.length())
-            )
+            // Open before announcing: a failed open after getstart left the PC
+            // holding an empty file it believed was a real download.
             file.inputStream().use { input ->
+                respond(
+                    JSONObject()
+                        .put("r", "getstart")
+                        .put("name", file.name)
+                        .put("size", file.length())
+                )
                 val buf = ByteArray(CHUNK)
                 while (true) {
                     val n = input.read(buf)
@@ -165,6 +191,10 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
     fun beginPut(dir: String, name: String, size: Long) = worker.execute {
         try {
             closeUpload()
+            // The PC still streams the chunks it already committed to sending even
+            // if this fails, so remember how many bytes to swallow — otherwise the
+            // next upload would be corrupted by the abandoned file's tail.
+            discardRemaining = size
             val folder = File(dir)
             if (!folder.isDirectory && !folder.mkdirs()) {
                 error("No such folder: $dir")
@@ -174,6 +204,7 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
             uploadStream = FileOutputStream(target)
             uploadRemaining = size
             uploadPath = target.absolutePath
+            discardRemaining = 0L
             if (size == 0L) finishUpload()
         } catch (t: Throwable) {
             closeUpload()
@@ -183,13 +214,26 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
 
     /** Feed one binary chunk of the in-progress upload. */
     fun feed(data: ByteArray) = worker.execute {
-        val out = uploadStream ?: return@execute
+        val out = uploadStream
+        if (out == null) {
+            // No open upload: drop the tail of a failed transfer silently.
+            if (discardRemaining > 0L) discardRemaining -= data.size
+            return@execute
+        }
         try {
-            out.write(data)
-            uploadRemaining -= data.size
+            // Never write past the declared size — a PC that sends more than it
+            // announced would otherwise append junk to the file.
+            val n = minOf(data.size.toLong(), uploadRemaining).toInt()
+            if (n > 0) {
+                out.write(data, 0, n)
+                uploadRemaining -= n
+            }
             if (uploadRemaining <= 0L) finishUpload()
         } catch (t: Throwable) {
+            val path = uploadPath
             closeUpload()
+            // Don't leave a half-written file behind.
+            if (path != null) runCatching { File(path).delete() }
             error("Upload failed: ${t.message}")
         }
     }
@@ -241,5 +285,7 @@ class FileTransfer(private val send: (type: Int, payload: ByteArray) -> Unit) {
         private const val CHUNK = 128 * 1024
         // Guard against pulling an unbounded tree (e.g. the storage root).
         private const val MAX_TREE_FILES = 5000
+        // At 128 KB per chunk this caps queued upload data at a few MB.
+        private const val QUEUE_DEPTH = 16
     }
 }

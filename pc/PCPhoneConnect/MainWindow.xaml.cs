@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -271,11 +272,21 @@ public partial class MainWindow : Window
     private void ResetUi(string status)
     {
         _recentsMode = false;
+        _dragging = false;
+        _downNorm = null;
         Title = "PC Phone Connect";
         ConnectButton.Content = "Connect";
         SetNavEnabled(false);
         ScreenImage.Source = null;
         Placeholder.Visibility = Visibility.Visible;
+
+        // Drop per-device state so a reconnect doesn't operate on the old phone's
+        // paths, and re-enable buttons a failed transfer may have left disabled.
+        SetTransferButtons(true);
+        PhoneFiles.Items.Clear();
+        _phonePath = "";
+        _phoneParent = null;
+        ClearTypeBoxLocal();
         Status(status);
     }
 
@@ -304,6 +315,17 @@ public partial class MainWindow : Window
         double ny = (p.Y - offY) / dispH;
         if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null;
         return (nx, ny);
+    }
+
+    /// <summary>Same mapping as <see cref="ToNormalized"/> but clamped to the edges.</summary>
+    private (double x, double y)? ClampToImage(Point p)
+    {
+        double iw = ScreenImage.ActualWidth, ih = ScreenImage.ActualHeight;
+        if (_srcW <= 0 || _srcH <= 0 || iw <= 0 || ih <= 0) return null;
+        double scale = Math.Min(iw / _srcW, ih / _srcH);
+        double dispW = _srcW * scale, dispH = _srcH * scale;
+        double offX = (iw - dispW) / 2, offY = (ih - dispH) / 2;
+        return (Math.Clamp((p.X - offX) / dispW, 0, 1), Math.Clamp((p.Y - offY) / dispH, 0, 1));
     }
 
     private void OnScreenMouseDown(object sender, MouseButtonEventArgs e)
@@ -351,21 +373,33 @@ public partial class MainWindow : Window
 
     private void OnScreenMouseUp(object sender, MouseButtonEventArgs e)
     {
-        if (!_client.IsConnected) { _downNorm = null; _dragging = false; return; }
+        // Release capture FIRST and unconditionally. Returning early while the
+        // image still holds capture swallows every later mouse event in the
+        // window — the whole app looks frozen until it is restarted.
         ScreenImage.ReleaseMouseCapture();
+        if (!_client.IsConnected) { _downNorm = null; _dragging = false; return; }
         _pressTimer.Stop();
 
         var upPoint = e.GetPosition(ScreenImage);
-        var upNorm = ToNormalized(upPoint);
         var start = _downNorm;
         _downNorm = null;
         if (start == null) { _dragging = false; return; }
-        var end = upNorm ?? start.Value;
+        // Releasing past the edge of the image used to snap the gesture back to
+        // the press point, cancelling the drag. Clamp to the edge instead.
+        var end = ToNormalized(upPoint) ?? ClampToImage(upPoint) ?? start.Value;
 
         // A live drag was in progress — release the continuous touch.
         if (_dragging)
         {
             _dragging = false;
+
+            // A pause before letting go means the user is placing, not flinging —
+            // decay the tracked velocity by how long the pointer sat still, or a
+            // stale reading would fling a deliberately positioned page.
+            double idleMs = _segTimer.Elapsed.TotalMilliseconds;
+            double decay = idleMs <= 40 ? 1.0 : Math.Max(0, 1.0 - (idleMs - 40) / 120.0);
+            _velX *= decay;
+            _velY *= decay;
 
             // Project the endpoint forward along the release velocity. A fast flick
             // then coasts past the page-turn threshold; a slow release barely moves.
@@ -411,6 +445,21 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Capture can be taken away mid-drag (alt-tab, a system dialog, the window
+    /// deactivating). Without this the injected touch is never lifted and the
+    /// phone keeps a finger held down, freezing whatever was being dragged.
+    /// </summary>
+    private void OnScreenLostCapture(object sender, MouseEventArgs e)
+    {
+        if (_dragging)
+        {
+            _dragging = false;
+            if (_client.IsConnected) _client.TouchUp(_lastSentNorm.x, _lastSentNorm.y, 16);
+        }
+        _downNorm = null;
+    }
+
     private void OnScreenRightUp(object sender, MouseButtonEventArgs e)
     {
         if (!_client.IsConnected) return;
@@ -431,6 +480,12 @@ public partial class MainWindow : Window
 
         var n = ToNormalized(e.GetPosition(ScreenImage));
 
+        // Spinning the wheel fast delivers several notches faster than a ~280ms
+        // swipe can be injected, and the phone drops gestures that arrive while
+        // one is running — so scroll distance scales with the accumulated delta
+        // instead of silently losing the extra notches.
+        int notches = Math.Clamp(Math.Abs(e.Delta) / 120, 1, 3);
+
         if (_recentsMode)
         {
             const double half = RecentsWheelDistance / 2;
@@ -442,7 +497,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            const double half = WheelDistance / 2;
+            double half = Math.Min(WheelDistance * notches, 0.8) / 2;
             double cx = Math.Clamp(n?.x ?? 0.5, 0.05, 0.95);
             // Wheel down → scroll page down → swipe up; wheel up → swipe down.
             double y1 = e.Delta < 0 ? 0.5 + half : 0.5 - half;
@@ -608,7 +663,14 @@ public partial class MainWindow : Window
             int done = 0;
             foreach (var file in tree.Files)
             {
-                var rel = file.RelativePath.Replace('/', Path.DirectorySeparatorChar);
+                // Sanitise every segment: the phone may hold names that are legal
+                // on Linux but illegal on Windows (: * ? " < > |), and a crafted
+                // path must not be able to escape the destination folder.
+                var rel = string.Join(Path.DirectorySeparatorChar,
+                    file.RelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+                        .Where(seg => seg != "." && seg != "..")
+                        .Select(SafeName));
+                if (rel.Length == 0) continue;
                 var destDir = Path.GetDirectoryName(Path.Combine(destRoot, rel)) ?? destRoot;
                 Directory.CreateDirectory(destDir);
                 TransferStatus.Text =
@@ -662,7 +724,10 @@ public partial class MainWindow : Window
         SetTransferButtons(false);
         try
         {
-            var files = Directory.GetFiles(sourceRoot, "*", SearchOption.AllDirectories);
+            // Enumerating a deep tree can take seconds; keep it off the UI thread.
+            TransferStatus.Text = $"Scanning {folderName}…";
+            var files = await Task.Run(
+                () => Directory.GetFiles(sourceRoot, "*", SearchOption.AllDirectories));
             if (files.Length == 0)
             {
                 TransferStatus.Text = $"{folderName} has no files to send.";
@@ -762,22 +827,30 @@ public partial class MainWindow : Window
     private void OnLocalDirChanged(object sender, TextChangedEventArgs e) => SaveFolders();
 
     // Local and remote folders persist between runs, next to the connection history.
+    // Setting LocalDirBox.Text raises TextChanged -> SaveFolders, which used to
+    // overwrite the file with the default before it had been read, losing the
+    // saved folders on every launch. Suppress saving while loading.
+    private bool _loadingFolders;
+
     private void LoadFolders()
     {
-        LocalDirBox.Text = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        _loadingFolders = true;
         try
         {
+            LocalDirBox.Text = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
             if (!File.Exists(SettingsPath)) return;
             var lines = File.ReadAllLines(SettingsPath);
             if (lines.Length > 0 && lines[0].Trim().Length > 0) LocalDirBox.Text = lines[0].Trim();
             if (lines.Length > 1 && lines[1].Trim().Length > 0) RemoteDirBox.Text = lines[1].Trim();
         }
         catch { /* best-effort */ }
+        finally { _loadingFolders = false; }
     }
 
     private void SaveFolders()
     {
+        if (_loadingFolders) return;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);

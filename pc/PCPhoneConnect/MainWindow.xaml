@@ -125,6 +125,7 @@
                                MouseLeftButtonDown="OnScreenMouseDown"
                                MouseLeftButtonUp="OnScreenMouseUp"
                                MouseMove="OnScreenMouseMove"
+                               LostMouseCapture="OnScreenLostCapture"
                                MouseRightButtonUp="OnScreenRightUp"
                                MouseWheel="OnScreenWheel" />
                         <TextBlock x:Name="Placeholder" Text="Not connected"

@@ -66,13 +66,21 @@ class StreamService : Service() {
     private var reusableBitmap: Bitmap? = null
     private val main = Handler(Looper.getMainLooper())
 
-    // File server for the currently connected PC, if any.
+    // File server and socket for the currently connected PC, if any.
     @Volatile private var fileTransfer: FileTransfer? = null
+    @Volatile private var clientSocket: Socket? = null
+    private var captureThread: android.os.HandlerThread? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        // A sticky restart redelivers a null intent. There is no projection token
+        // to recover, so stop instead of lingering as a zombie service.
+        if (intent == null) {
+            stopEverything()
+            return START_NOT_STICKY
+        }
+        when (intent.action) {
             ACTION_STOP -> {
                 stopEverything()
                 return START_NOT_STICKY
@@ -92,7 +100,9 @@ class StreamService : Service() {
                 startProjection(resultCode, data)
             }
         }
-        return START_STICKY
+        // Not sticky: the MediaProjection token cannot survive a process restart,
+        // so a relaunched service could never resume capture anyway.
+        return START_NOT_STICKY
     }
 
     private fun startProjection(resultCode: Int, data: Intent) {
@@ -112,10 +122,17 @@ class StreamService : Service() {
         }, main)
         projection = proj
 
+        // Frame capture, the pixel copy and JPEG encoding are all expensive; run
+        // them on a dedicated thread so they never stutter the UI or delay the
+        // gesture dispatch that shares the main looper.
+        val thread = android.os.HandlerThread("pc-capture").apply { start() }
+        captureThread = thread
+        val captureHandler = Handler(thread.looper)
+
         val reader = ImageReader.newInstance(
             streamWidth, streamHeight, PixelFormat.RGBA_8888, 2
         )
-        reader.setOnImageAvailableListener({ r -> onFrame(r) }, main)
+        reader.setOnImageAvailableListener({ r -> onFrame(r) }, captureHandler)
         imageReader = reader
 
         virtualDisplay = proj.createVirtualDisplay(
@@ -198,9 +215,10 @@ class StreamService : Service() {
     }
 
     private fun acceptLoop() {
+        var ss: ServerSocket? = null
         try {
             // reuseAddress must be set before bind, so create unbound then bind.
-            val ss = ServerSocket()
+            ss = ServerSocket()
             ss.reuseAddress = true
             ss.bind(java.net.InetSocketAddress(port))
             serverSocket = ss
@@ -218,6 +236,11 @@ class StreamService : Service() {
             }
         } catch (t: Throwable) {
             log("Server error: ${t.message}")
+        } finally {
+            // Don't leak the listener if bind succeeded but the loop threw, or if
+            // a Start/Stop race replaced the serverSocket field.
+            try { ss?.close() } catch (_: Throwable) {}
+            if (serverSocket === ss) serverSocket = null
         }
     }
 
@@ -229,17 +252,25 @@ class StreamService : Service() {
         // Frames and file responses share one socket, so every write is framed
         // under this lock to keep messages from interleaving.
         val outLock = Any()
+        // Must never throw: this is called from the file worker thread, where an
+        // uncaught IOException on a dead socket would take down the process.
         fun sendFramed(type: Int, payload: ByteArray) {
-            synchronized(outLock) {
-                output.writeByte(type)
-                output.writeInt(payload.size)
-                output.write(payload)
-                output.flush()
+            try {
+                synchronized(outLock) {
+                    output.writeByte(type)
+                    output.writeInt(payload.size)
+                    output.write(payload)
+                    output.flush()
+                }
+            } catch (_: Throwable) {
+                // Client gone; the frame loop notices and closes the connection.
+                try { socket.close() } catch (_: Throwable) {}
             }
         }
 
         val files = FileTransfer(::sendFramed)
         fileTransfer = files
+        clientSocket = socket
 
         // Reader thread for control messages.
         val reader = Thread({ controlLoop(input, files) }, "pc-control")
@@ -280,6 +311,9 @@ class StreamService : Service() {
         } finally {
             files.shutdown()
             if (fileTransfer === files) fileTransfer = null
+            if (clientSocket === socket) clientSocket = null
+            // The PC may have dropped mid-drag; release any held finger.
+            try { ControlAccessibilityService.instance?.cancelDrag() } catch (_: Throwable) {}
             try { socket.close() } catch (_: Throwable) {}
         }
     }
@@ -295,7 +329,14 @@ class StreamService : Service() {
                 val type = input.read()
                 if (type < 0) break
                 val len = input.readInt()
-                if (len < 0 || len > MAX_INBOUND) break
+                if (len < 0 || len > MAX_INBOUND) {
+                    // The stream is out of sync and cannot be resynchronised;
+                    // drop the client so it reconnects rather than silently
+                    // leaving control dead while video keeps streaming.
+                    log("Bad control frame ($len bytes) — dropping client")
+                    try { clientSocket?.close() } catch (_: Throwable) {}
+                    break
+                }
                 val buf = ByteArray(len)
                 input.readFully(buf)
                 when (type) {
@@ -354,6 +395,38 @@ class StreamService : Service() {
             }
         } catch (t: Throwable) {
             // ignore malformed control message
+        }
+    }
+
+    /**
+     * Normalised control coordinates are scaled by the current display size, which
+     * swaps on rotation. Refresh the cached size here rather than querying the
+     * WindowManager per coordinate: that query is slow enough that it broke the
+     * timing gesture continuation depends on, and drags stopped working entirely.
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val (w, h) = measureRealSize()
+        if (w > 0 && h > 0) {
+            realWidth = w
+            realHeight = h
+        }
+    }
+
+    private fun measureRealSize(): Pair<Int, Int> {
+        val wm = getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+            ?: return realWidth to realHeight
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val b = wm.currentWindowMetrics.bounds
+                b.width() to b.height()
+            } else {
+                val dm = DisplayMetrics()
+                @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(dm)
+                dm.widthPixels to dm.heightPixels
+            }
+        } catch (_: Throwable) {
+            realWidth to realHeight
         }
     }
 
@@ -450,12 +523,22 @@ class StreamService : Service() {
 
     private fun stopEverything() {
         running = false
+        // Close the live client too, otherwise the frame loop keeps the socket
+        // (and the file worker) alive after the service is told to stop.
+        try { clientSocket?.close() } catch (_: Throwable) {}
+        clientSocket = null
+        try { fileTransfer?.shutdown() } catch (_: Throwable) {}
+        fileTransfer = null
         try { serverSocket?.close() } catch (_: Throwable) {}
         serverSocket = null
+        // A drag in flight would otherwise leave a finger held down on screen.
+        try { ControlAccessibilityService.instance?.cancelDrag() } catch (_: Throwable) {}
         try { virtualDisplay?.release() } catch (_: Throwable) {}
         virtualDisplay = null
         try { imageReader?.close() } catch (_: Throwable) {}
         imageReader = null
+        try { captureThread?.quitSafely() } catch (_: Throwable) {}
+        captureThread = null
         try { projection?.stop() } catch (_: Throwable) {}
         projection = null
         reusableBitmap?.recycle()

@@ -172,6 +172,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool _initialHomeDone;
+
     private void OnHeader(DeviceHeader h) => Dispatcher.Invoke(() =>
     {
         // Shape the bezel to the real device aspect ratio.
@@ -185,6 +187,13 @@ public partial class MainWindow : Window
         Placeholder.Visibility = Visibility.Collapsed;
         SetNavEnabled(true);
         Status($"Mirroring {h.Name} ({h.Width}×{h.Height}). Click to tap, drag to swipe, right-click = Back.");
+
+        // On first connect, start the view on the phone's home page.
+        if (!_initialHomeDone)
+        {
+            _initialHomeDone = true;
+            _client.Key("home");
+        }
     });
 
     private void OnFrame(byte[] jpeg)

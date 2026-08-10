@@ -10,6 +10,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Lets the app switch its own accessibility service back on, which Android
+         turns off on every app update. Not grantable from inside the app; it is a
+         development-protection permission, so it is granted once over adb:
+           adb shell pm grant com.j0ker.pcphoneconnect android.permission.WRITE_SECURE_SETTINGS
+         Without the grant the app simply asks the user to enable it as before. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
     <!-- File transfer to/from the paired PC. Scoped storage blocks browsing
          shared storage, so broad access is requested explicitly by the user. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"

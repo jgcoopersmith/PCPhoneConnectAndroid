@@ -92,7 +92,48 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
     override fun onResume() {
         super.onResume()
         StreamService.listener = this
+        restoreAccessibilityIfPossible()
         refreshUi(StreamService.isRunning)
+    }
+
+    /**
+     * Android switches this app's accessibility service off on every update, and
+     * with it off the mirror still streams while every tap is silently dropped —
+     * which reads as "the app broke". An app cannot enable its own service, but
+     * with WRITE_SECURE_SETTINGS granted once over adb it can put itself back in
+     * the enabled list, so an update no longer costs a trip through Settings.
+     */
+    private fun restoreAccessibilityIfPossible() {
+        if (ControlAccessibilityService.isEnabled) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_SECURE_SETTINGS)
+            != PackageManager.PERMISSION_GRANTED
+        ) return
+
+        val component = "$packageName/${ControlAccessibilityService::class.java.name}"
+        try {
+            val current = Settings.Secure.getString(
+                contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ).orEmpty()
+            // Preserve any other services the user relies on.
+            val services = current.split(':').filter { it.isNotBlank() }.toMutableList()
+            if (services.none { it.equals(component, ignoreCase = true) }) {
+                services += component
+                Settings.Secure.putString(
+                    contentResolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                    services.joinToString(":")
+                )
+            }
+            Settings.Secure.putInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+            toast("Remote control re-enabled")
+            // Binding happens a moment later, so the status line drawn right after
+            // this would still say OFF. Refresh once the service has connected.
+            binding.root.postDelayed({
+                if (!isFinishing) refreshUi(StreamService.isRunning)
+            }, 1200)
+        } catch (_: Throwable) {
+            // Grant missing or blocked by the OEM — fall back to the manual button.
+        }
     }
 
     override fun onPause() {
@@ -163,8 +204,14 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
     private fun refreshUi(running: Boolean) {
         binding.startButton.isEnabled = !running
         binding.stopButton.isEnabled = running
-        binding.accessibilityStatus.text =
-            "Accessibility service: " + if (ControlAccessibilityService.isEnabled) "ON" else "OFF"
+        val canSelfRestore = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.WRITE_SECURE_SETTINGS
+        ) == PackageManager.PERMISSION_GRANTED
+        binding.accessibilityStatus.text = buildString {
+            append("Accessibility service: ")
+            append(if (ControlAccessibilityService.isEnabled) "ON" else "OFF")
+            append(if (canSelfRestore) " (auto-restores after updates)" else " (turns off on app update)")
+        }
         val filesOn = hasAllFilesAccess()
         binding.fileAccessStatus.text = "File transfer access: " + if (filesOn) "ON" else "OFF"
         binding.enableFilesButton.isEnabled = !filesOn

@@ -67,6 +67,8 @@ public partial class MainWindow : Window
         Closed += (_, _) => _client.Dispose();
         PreviewKeyDown += OnKeyDown;
         Loaded += OnLoaded;
+        // The layered-window style needs a real HWND, which exists from here on.
+        SourceInitialized += (_, _) => ApplyWindowAlpha();
         LoadHistory();
         LoadFolders();
         HistoryList.ItemsSource = _history;
@@ -239,6 +241,7 @@ public partial class MainWindow : Window
             : h.Name;
         if (h.AndroidVersion.Length > 0) detail += $" · Android {h.AndroidVersion}";
         Title = $"PC Phone Connect — {h.Name}";
+        TitleText.Text = Title;
         Status($"Mirroring {detail} ({h.Width}×{h.Height}). Click to tap, drag to swipe, right-click = Back.");
 
         // Start the view on the phone's main home page. Only mark it done once
@@ -306,6 +309,7 @@ public partial class MainWindow : Window
         _dragging = false;
         _downNorm = null;
         Title = "PC Phone Connect";
+        TitleText.Text = Title;
         ConnectButton.Content = "Connect";
         SetNavEnabled(false);
         ScreenImage.Source = null;
@@ -596,8 +600,6 @@ public partial class MainWindow : Window
 
     private bool _widgetMode;
     private Rect _normalBounds;
-    private WindowStyle _normalStyle;
-    private ResizeMode _normalResize;
 
     private static readonly string WidgetSettingsPath = Path.Combine(
         Path.GetDirectoryName(HistoryPath)!, "widget.txt");
@@ -635,10 +637,9 @@ public partial class MainWindow : Window
         if (on)
         {
             _normalBounds = new Rect(Left, Top, Width, Height);
-            _normalStyle = WindowStyle;
-            _normalResize = ResizeMode;
 
             // Strip everything except the mirror.
+            TitleBar.Visibility = Visibility.Collapsed;
             ConnectionBar.Visibility = Visibility.Collapsed;
             NavBar.Visibility = Visibility.Collapsed;
             TextBar.Visibility = Visibility.Collapsed;
@@ -647,8 +648,6 @@ public partial class MainWindow : Window
             FilePanel.Visibility = Visibility.Collapsed;
             ContentGrid.Margin = new Thickness(0);
 
-            WindowStyle = WindowStyle.None;
-            ResizeMode = ResizeMode.CanResizeWithGrip;
             MinWidth = 160;
             MinHeight = 260;
             Width = Math.Max(240, _normalBounds.Width * 0.55);
@@ -656,6 +655,7 @@ public partial class MainWindow : Window
         }
         else
         {
+            TitleBar.Visibility = Visibility.Visible;
             ConnectionBar.Visibility = Visibility.Visible;
             NavBar.Visibility = Visibility.Visible;
             TextBar.Visibility = Visibility.Visible;
@@ -663,8 +663,6 @@ public partial class MainWindow : Window
             FilesTab.Visibility = Visibility.Visible;
             ContentGrid.Margin = new Thickness(16);
 
-            WindowStyle = _normalStyle;
-            ResizeMode = _normalResize;
             MinWidth = 360;
             MinHeight = 600;
             if (_normalBounds.Width > 0)
@@ -701,6 +699,24 @@ public partial class MainWindow : Window
             IsInteractiveSource(e.OriginalSource as DependencyObject))
         {
             e.Handled = true;
+            return;
+        }
+        // Tick whichever opacity is currently in effect.
+        if (RootGrid.ContextMenu is { } menu)
+        {
+            foreach (var top in menu.Items.OfType<MenuItem>())
+            {
+                foreach (var sub in top.Items.OfType<MenuItem>())
+                {
+                    if (sub.Tag is string t &&
+                        double.TryParse(t, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var v))
+                    {
+                        sub.IsCheckable = true;
+                        sub.IsChecked = Math.Abs(v - _windowAlpha) < 0.001;
+                    }
+                }
+            }
         }
     }
 
@@ -716,10 +732,31 @@ public partial class MainWindow : Window
             double.TryParse(tag, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var value))
         {
-            Opacity = Math.Clamp(value, 0.2, 1.0);
+            _windowAlpha = Math.Clamp(value, 0.2, 1.0);
+            ApplyWindowAlpha();
             SaveWidgetSettings();
         }
     }
+
+    // ---- Window transparency ----
+    // Window.Opacity is only genuinely see-through when AllowsTransparency is set,
+    // and WPF allows that only on a chromeless window. Without it the content was
+    // merely blended against the window's own dark background, which read as
+    // "dimmer, not transparent". The window is now WindowStyle=None +
+    // AllowsTransparency with the title bar drawn below, so Opacity is real.
+    private double _windowAlpha = 1.0;
+
+    private void ApplyWindowAlpha() => Opacity = Math.Clamp(_windowAlpha, 0.2, 1.0);
+
+    private void OnTitleBarDrag(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left) return;
+        if (e.ClickCount == 2) { SetWidgetMode(!_widgetMode); e.Handled = true; return; }
+        try { DragMove(); } catch { /* button already released */ }
+    }
+
+    private void OnMinimize(object sender, RoutedEventArgs e) =>
+        WindowState = WindowState.Minimized;
 
     private void OnStartWithWindows(object sender, RoutedEventArgs e)
     {
@@ -777,7 +814,7 @@ public partial class MainWindow : Window
                     case "opacity":
                         if (double.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out var o))
-                            Opacity = Math.Clamp(o, 0.2, 1.0);
+                            _windowAlpha = Math.Clamp(o, 0.2, 1.0);
                         break;
                     case "widget":
                         if (value == "1") Dispatcher.BeginInvoke(() => SetWidgetMode(true));
@@ -796,7 +833,7 @@ public partial class MainWindow : Window
             File.WriteAllLines(WidgetSettingsPath, new[]
             {
                 $"topmost={(Topmost ? 1 : 0)}",
-                $"opacity={Opacity.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}",
+                $"opacity={_windowAlpha.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}",
                 $"widget={(_widgetMode ? 1 : 0)}",
             });
         }

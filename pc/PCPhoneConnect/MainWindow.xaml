@@ -4,7 +4,9 @@
         Title="PC Phone Connect" Height="820" Width="460"
         MinHeight="600" MinWidth="360" Icon="app.ico"
         MouseDoubleClick="OnWindowDoubleClick"
-        Background="#0E1726" WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip"
+        AllowsTransparency="True" Background="Transparent">
 
     <Window.Resources>
         <Style TargetType="Button">
@@ -72,6 +74,33 @@
         </ContextMenu>
     </Grid.ContextMenu>
 
+   <Grid.RowDefinitions>
+       <RowDefinition Height="Auto" />
+       <RowDefinition Height="*" />
+   </Grid.RowDefinitions>
+
+   <!-- Custom title bar: the native one is gone because AllowsTransparency
+        (needed for real see-through opacity) requires WindowStyle=None. -->
+   <Border x:Name="TitleBar" Grid.Row="0" Background="#16223C"
+           MouseLeftButtonDown="OnTitleBarDrag">
+       <Grid>
+           <Grid.ColumnDefinitions>
+               <ColumnDefinition Width="*" />
+               <ColumnDefinition Width="Auto" />
+           </Grid.ColumnDefinitions>
+           <TextBlock x:Name="TitleText" Grid.Column="0" Text="PC Phone Connect"
+                      Foreground="#E6ECF5" FontSize="12" VerticalAlignment="Center"
+                      Margin="12,8,8,8" TextTrimming="CharacterEllipsis" />
+           <StackPanel Grid.Column="1" Orientation="Horizontal">
+               <Button Content="—" Width="42" Padding="0" Margin="0" Click="OnMinimize"
+                       ToolTip="Minimise" />
+               <Button Content="✕" Width="42" Padding="0" Margin="0" Click="OnCloseFromMenu"
+                       ToolTip="Close" />
+           </StackPanel>
+       </Grid>
+   </Border>
+
+   <Grid Grid.Row="1">
    <Grid x:Name="ContentGrid" Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -329,5 +358,6 @@
                       TextWrapping="Wrap" Text="Double-click a folder to open it." />
        </Grid>
    </Border>
+   </Grid>
   </Grid>
 </Window>

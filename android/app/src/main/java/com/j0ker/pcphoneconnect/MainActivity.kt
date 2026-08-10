@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
@@ -99,8 +100,23 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         if (!ControlAccessibilityService.isEnabled) {
             toast("Tip: enable the Accessibility service first for remote control")
         }
-        projectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+        projectionLauncher.launch(screenCaptureIntent())
     }
+
+    /**
+     * Always capture the whole display. From Android 14 the consent dialog offers
+     * "Share one app" and defaults to it; a single-app capture would mirror only
+     * this app, which is useless here. Pinning the config to the default display
+     * removes that choice entirely, so the dialog just asks to share the screen.
+     */
+    private fun screenCaptureIntent(): Intent =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            projectionManager.createScreenCaptureIntent(
+                MediaProjectionConfig.createConfigForDefaultDisplay()
+            )
+        } else {
+            projectionManager.createScreenCaptureIntent()
+        }
 
     /**
      * Browsing shared storage needs "All files access" on Android 11+, which is

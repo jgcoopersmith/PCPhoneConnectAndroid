@@ -79,7 +79,8 @@
                                RenderOptions.BitmapScalingMode="HighQuality"
                                MouseLeftButtonDown="OnScreenMouseDown"
                                MouseLeftButtonUp="OnScreenMouseUp"
-                               MouseRightButtonUp="OnScreenRightUp" />
+                               MouseRightButtonUp="OnScreenRightUp"
+                               MouseWheel="OnScreenWheel" />
                         <TextBlock x:Name="Placeholder" Text="Not connected"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Foreground="#5A6B8C" FontSize="18" />

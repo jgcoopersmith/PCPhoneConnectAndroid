@@ -205,6 +205,39 @@ public partial class MainWindow : Window
         if (_client.IsConnected) _client.Key("back");
     }
 
+    /// <summary>
+    /// Mouse wheel → vertical swipe, so scrolling works in browsers, Reddit, feeds, etc.
+    /// Wheel up scrolls the page up (finger swipes down); wheel down scrolls down
+    /// (finger swipes up). The swipe runs at the cursor's X so split layouts scroll
+    /// the pane under the pointer.
+    /// </summary>
+    private void OnScreenWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (!_client.IsConnected) return;
+
+        var n = ToNormalized(e.GetPosition(ScreenImage));
+        double cx = Math.Clamp(n?.x ?? 0.5, 0.05, 0.95);
+
+        const double distance = 0.45; // fraction of screen height per notch
+        double half = distance / 2;
+
+        double y1, y2;
+        if (e.Delta < 0) // wheel down → scroll page down → swipe up
+        {
+            y1 = 0.5 + half;
+            y2 = 0.5 - half;
+        }
+        else // wheel up → scroll page up → swipe down
+        {
+            y1 = 0.5 - half;
+            y2 = 0.5 + half;
+        }
+
+        // A short duration gives a flick with a little momentum, like a real scroll.
+        _client.Swipe(cx, y1, cx, y2, 90);
+        e.Handled = true;
+    }
+
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
         if (!_client.IsConnected) return;

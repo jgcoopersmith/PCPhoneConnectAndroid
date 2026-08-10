@@ -126,14 +126,16 @@ public sealed class PhoneClient : IDisposable
         Send($"{{\"t\":\"key\",\"k\":\"{key}\"}}");
 
     // Continuous drag: a touch that stays down across down -> move* -> up.
+    // durationMs is the real time the cursor took for this segment, so the phone
+    // replays the stroke at the user's actual speed (needed for fling velocity).
     public void TouchDown(double x, double y) =>
         Send($"{{\"t\":\"down\",\"x\":{F(x)},\"y\":{F(y)}}}");
 
-    public void TouchMove(double x, double y) =>
-        Send($"{{\"t\":\"move\",\"x\":{F(x)},\"y\":{F(y)}}}");
+    public void TouchMove(double x, double y, int durationMs) =>
+        Send($"{{\"t\":\"move\",\"x\":{F(x)},\"y\":{F(y)},\"d\":{durationMs}}}");
 
-    public void TouchUp(double x, double y) =>
-        Send($"{{\"t\":\"up\",\"x\":{F(x)},\"y\":{F(y)}}}");
+    public void TouchUp(double x, double y, int durationMs) =>
+        Send($"{{\"t\":\"up\",\"x\":{F(x)},\"y\":{F(y)},\"d\":{durationMs}}}");
 
     private static string F(double v) =>
         v.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture);

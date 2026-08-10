@@ -1,6 +1,8 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
 
@@ -19,14 +21,27 @@ public partial class MainWindow : Window
     // Live drag ("grab and pull"): once the cursor moves past the tap threshold
     // while held, we stream a continuous touch (down -> move* -> up).
     private bool _dragging;
-    private readonly Stopwatch _moveThrottle = new();
-    private const double MoveIntervalMs = 15; // cap move messages to ~66/s
+    private readonly Stopwatch _segTimer = new();   // real time since the last sent segment
+    private const double MoveIntervalMs = 10;        // cap move messages to ~100/s
+
+    // Release-momentum ("fling"): the launcher pages on drag distance, not on
+    // injected velocity, so on a fast flick we project the endpoint forward to
+    // carry the gesture past the page-turn threshold. Slow releases stay 1:1.
+    private (double x, double y) _lastSentNorm;
+    private double _velX, _velY;                     // normalized units per ms (smoothed)
+    private const double MomentumMs = 110;           // how far a flick coasts
 
     // While the phone is showing Recent apps (opened via the Recents button/key),
     // the wheel scrolls the carousel horizontally instead of vertically.
     private bool _recentsMode;
 
     private const double TapMovePixels = 14; // device-space movement below this = tap
+
+    // Recent connections, most-recent first, persisted between runs.
+    private readonly ObservableCollection<string> _history = new();
+    private static readonly string HistoryPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "PCPhoneConnect", "history.txt");
 
     public MainWindow()
     {
@@ -37,6 +52,59 @@ public partial class MainWindow : Window
         Closed += (_, _) => _client.Dispose();
         PreviewKeyDown += OnKeyDown;
         Loaded += OnLoaded;
+        LoadHistory();
+        HistoryList.ItemsSource = _history;
+    }
+
+    // ---------------- Connection history ----------------
+
+    private void OnAddressFieldFocus(object sender, RoutedEventArgs e)
+    {
+        if (_history.Count > 0) HistoryPopup.IsOpen = true;
+    }
+
+    private void OnHistoryPick(object sender, MouseButtonEventArgs e)
+    {
+        if (HistoryList.SelectedItem is not string entry) return;
+        var parts = entry.Split(':');
+        IpBox.Text = parts[0];
+        if (parts.Length > 1) PortBox.Text = parts[1];
+        HistoryPopup.IsOpen = false;
+        ConnectButton.Focus();
+    }
+
+    private void RememberConnection(string ip, int port)
+    {
+        var entry = $"{ip}:{port}";
+        int existing = _history.IndexOf(entry);
+        if (existing >= 0) _history.Move(existing, 0);
+        else _history.Insert(0, entry);
+        while (_history.Count > 10) _history.RemoveAt(_history.Count - 1);
+        SaveHistory();
+    }
+
+    private void LoadHistory()
+    {
+        try
+        {
+            if (!File.Exists(HistoryPath)) return;
+            foreach (var line in File.ReadAllLines(HistoryPath))
+            {
+                var t = line.Trim();
+                if (t.Length > 0 && !_history.Contains(t)) _history.Add(t);
+            }
+        }
+        catch { /* history is best-effort */ }
+    }
+
+    private void SaveHistory()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(HistoryPath)!);
+            File.WriteAllLines(HistoryPath, _history);
+        }
+        catch { /* history is best-effort */ }
     }
 
     /// <summary>
@@ -81,6 +149,8 @@ public partial class MainWindow : Window
             _client.Connect(host, port);
             ConnectButton.Content = "Disconnect";
             Status($"Connected to {host}:{port}. Waiting for screen…");
+            RememberConnection(host, port);
+            HistoryPopup.IsOpen = false;
         }
         catch (Exception ex)
         {
@@ -178,7 +248,7 @@ public partial class MainWindow : Window
         _downNorm = ToNormalized(p);
         _dragging = false;
         _pressTimer.Restart();
-        _moveThrottle.Restart();
+        _segTimer.Restart();
         ScreenImage.CaptureMouse();
     }
 
@@ -195,12 +265,24 @@ public partial class MainWindow : Window
             if (Math.Sqrt(dx * dx + dy * dy) < TapMovePixels) return; // still a potential tap
             _dragging = true;
             _client.TouchDown(_downNorm.Value.x, _downNorm.Value.y); // grab where the press began
-            _moveThrottle.Restart();
+            _lastSentNorm = _downNorm.Value;
+            _velX = _velY = 0;
+            _segTimer.Restart();
         }
 
-        if (_moveThrottle.Elapsed.TotalMilliseconds < MoveIntervalMs) return;
-        _moveThrottle.Restart();
-        _client.TouchMove(cur.Value.x, cur.Value.y);
+        double elapsed = _segTimer.Elapsed.TotalMilliseconds;
+        if (elapsed < MoveIntervalMs) return;
+        _segTimer.Restart();
+
+        // Track a smoothed velocity for release momentum.
+        double dt = Math.Max(elapsed, 1);
+        double ivx = (cur.Value.x - _lastSentNorm.x) / dt;
+        double ivy = (cur.Value.y - _lastSentNorm.y) / dt;
+        _velX = 0.6 * ivx + 0.4 * _velX;
+        _velY = 0.6 * ivy + 0.4 * _velY;
+        _lastSentNorm = cur.Value;
+
+        _client.TouchMove(cur.Value.x, cur.Value.y, (int)Math.Round(elapsed));
     }
 
     private void OnScreenMouseUp(object sender, MouseButtonEventArgs e)
@@ -220,7 +302,28 @@ public partial class MainWindow : Window
         if (_dragging)
         {
             _dragging = false;
-            _client.TouchUp(end.x, end.y);
+
+            // Project the endpoint forward along the release velocity. A fast flick
+            // then coasts past the page-turn threshold; a slow release barely moves.
+            double projX = Math.Clamp(end.x + _velX * MomentumMs, 0, 1);
+            double projY = Math.Clamp(end.y + _velY * MomentumMs, 0, 1);
+            double coastPix = Math.Sqrt(Math.Pow((projX - end.x) * _srcW, 2) +
+                                        Math.Pow((projY - end.y) * _srcH, 2));
+
+            if (coastPix > TapMovePixels * 2)
+            {
+                const int steps = 4;
+                for (int i = 1; i <= steps; i++)
+                {
+                    double t = i / (double)steps;
+                    _client.TouchMove(end.x + (projX - end.x) * t, end.y + (projY - end.y) * t, 8);
+                }
+                _client.TouchUp(projX, projY, 8);
+            }
+            else
+            {
+                _client.TouchUp(end.x, end.y, (int)Math.Round(_segTimer.Elapsed.TotalMilliseconds));
+            }
             return;
         }
 

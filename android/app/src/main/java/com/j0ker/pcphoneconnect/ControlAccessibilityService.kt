@@ -66,7 +66,7 @@ class ControlAccessibilityService : AccessibilityService() {
 
     fun touchDown(x: Float, y: Float) {
         val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, DRAG_SEGMENT_MS, true)
+        val stroke = GestureDescription.StrokeDescription(path, 0, DOWN_SEGMENT_MS, true)
         dragStroke = stroke
         lastX = x; lastY = y
         try {
@@ -76,11 +76,16 @@ class ControlAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun touchMove(x: Float, y: Float) {
+    /**
+     * [durationMs] is the real time the cursor took to reach this point, so the
+     * injected stroke plays at the user's actual speed — that is what lets a quick
+     * flick build fling velocity and turn a home page instead of rubber-banding.
+     */
+    fun touchMove(x: Float, y: Float, durationMs: Long) {
         val prev = dragStroke ?: run { touchDown(x, y); return }
         val path = Path().apply { moveTo(lastX, lastY); lineTo(x, y) }
         val next = try {
-            prev.continueStroke(path, 0, DRAG_SEGMENT_MS, true)
+            prev.continueStroke(path, 0, durationMs.coerceIn(4, 1000), true)
         } catch (_: Throwable) {
             // Previous gesture already ended (dropped/timed out) — start a fresh touch.
             touchDown(x, y); return
@@ -94,7 +99,7 @@ class ControlAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun touchUp(x: Float, y: Float) {
+    fun touchUp(x: Float, y: Float, durationMs: Long) {
         val prev = dragStroke
         dragStroke = null
         if (prev == null) { tap(x, y); return }
@@ -104,7 +109,7 @@ class ControlAccessibilityService : AccessibilityService() {
             if (x == lastX && y == lastY) lineTo(x + 1f, y) else lineTo(x, y)
         }
         val end = try {
-            prev.continueStroke(path, 0, DRAG_SEGMENT_MS, false)
+            prev.continueStroke(path, 0, durationMs.coerceIn(4, 1000), false)
         } catch (_: Throwable) {
             null
         }
@@ -130,9 +135,8 @@ class ControlAccessibilityService : AccessibilityService() {
     }
 
     companion object {
-        // Per-segment gesture duration for continuous drags. A little longer than the
-        // PC's move cadence so consecutive segments overlap and stay continuous.
-        private const val DRAG_SEGMENT_MS = 60L
+        // Initial touch-down dwell before the first move arrives.
+        private const val DOWN_SEGMENT_MS = 12L
 
         @Volatile
         var instance: ControlAccessibilityService? = null

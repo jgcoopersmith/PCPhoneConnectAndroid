@@ -64,9 +64,48 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBox x:Name="IpBox" Grid.Column="0" Margin="0,0,8,0" Text="192.168.1.50"
-                     ToolTip="Phone IP address (shown in the phone app)" />
-            <TextBox x:Name="PortBox" Grid.Column="1" Margin="0,0,8,0" Text="6060" />
+                     ToolTip="Phone IP address (shown in the phone app). Click for recent connections."
+                     GotKeyboardFocus="OnAddressFieldFocus" />
+            <TextBox x:Name="PortBox" Grid.Column="1" Margin="0,0,8,0" Text="6060"
+                     GotKeyboardFocus="OnAddressFieldFocus" />
             <Button x:Name="ConnectButton" Grid.Column="2" Content="Connect" Click="OnConnectClick" />
+
+            <!-- Recent connections dropdown -->
+            <Popup x:Name="HistoryPopup" PlacementTarget="{Binding ElementName=IpBox}"
+                   Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
+                <Border Background="#16223C" BorderBrush="#2B3B5E" BorderThickness="1"
+                        CornerRadius="6" Padding="4" Margin="0,2,0,0" MinWidth="230">
+                    <StackPanel>
+                        <TextBlock Text="Recent connections" Margin="6,4,6,6"
+                                   FontSize="11" Foreground="#7C89A6" />
+                        <ListBox x:Name="HistoryList" Background="Transparent" BorderThickness="0"
+                                 Foreground="#E6ECF5" MaxHeight="240"
+                                 PreviewMouseLeftButtonUp="OnHistoryPick">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="8,6" />
+                                    <Setter Property="Foreground" Value="#E6ECF5" />
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListBoxItem">
+                                                <Border x:Name="ib" Background="Transparent"
+                                                        CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="ib" Property="Background" Value="#2B3B5E" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                        </ListBox>
+                    </StackPanel>
+                </Border>
+            </Popup>
         </Grid>
 
         <!-- Phone frame -->

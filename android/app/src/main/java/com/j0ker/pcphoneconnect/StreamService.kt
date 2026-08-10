@@ -294,8 +294,8 @@ class StreamService : Service() {
                     o.optLong("dur", 200)
                 )
                 "down" -> svc.touchDown(px(o.optDouble("x")), py(o.optDouble("y")))
-                "move" -> svc.touchMove(px(o.optDouble("x")), py(o.optDouble("y")))
-                "up" -> svc.touchUp(px(o.optDouble("x")), py(o.optDouble("y")))
+                "move" -> svc.touchMove(px(o.optDouble("x")), py(o.optDouble("y")), o.optLong("d", 16))
+                "up" -> svc.touchUp(px(o.optDouble("x")), py(o.optDouble("y")), o.optLong("d", 16))
                 "key" -> svc.globalKey(o.optString("k"))
             }
         } catch (t: Throwable) {

@@ -27,25 +27,37 @@ public sealed class PhoneClient : IDisposable
 
     public bool IsConnected => _running;
 
-    public void Connect(string host, int port)
+    public void Connect(string host, int port, int timeoutMs = 5000)
     {
         Disconnect();
-        _tcp = new TcpClient();
-        _tcp.NoDelay = true;
-        _tcp.Connect(host, port);
-        _stream = _tcp.GetStream();
+        var tcp = new TcpClient { NoDelay = true };
+        try
+        {
+            if (!tcp.ConnectAsync(host, port).Wait(timeoutMs))
+            {
+                tcp.Close();
+                throw new TimeoutException($"No response from {host}:{port} within {timeoutMs / 1000}s.");
+            }
+        }
+        catch (AggregateException ae)
+        {
+            tcp.Close();
+            throw ae.InnerException ?? ae; // surface the real SocketException message
+        }
+        _tcp = tcp;
+        _stream = tcp.GetStream();
         _running = true;
-        _readThread = new Thread(ReadLoop) { IsBackground = true, Name = "phone-read" };
+        var stream = _stream;
+        _readThread = new Thread(() => ReadLoop(stream)) { IsBackground = true, Name = "phone-read" };
         _readThread.Start();
     }
 
-    private void ReadLoop()
+    private void ReadLoop(NetworkStream stream)
     {
-        var stream = _stream!;
         var lenBuf = new byte[4];
         try
         {
-            while (_running)
+            while (_running && ReferenceEquals(_stream, stream))
             {
                 int type = stream.ReadByte();
                 if (type < 0) break;
@@ -68,11 +80,13 @@ public sealed class PhoneClient : IDisposable
         }
         catch (Exception ex)
         {
-            if (_running) Disconnected?.Invoke(ex.Message);
+            if (_running && ReferenceEquals(_stream, stream)) Disconnected?.Invoke(ex.Message);
         }
         finally
         {
-            if (_running)
+            // Only report the disconnect if this is still the active connection —
+            // a stale read thread from a replaced connection must stay silent.
+            if (_running && ReferenceEquals(_stream, stream))
             {
                 _running = false;
                 Disconnected?.Invoke("Connection closed");

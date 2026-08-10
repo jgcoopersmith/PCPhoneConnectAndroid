@@ -196,8 +196,10 @@ class StreamService : Service() {
 
     private fun acceptLoop() {
         try {
-            val ss = ServerSocket(port)
+            // reuseAddress must be set before bind, so create unbound then bind.
+            val ss = ServerSocket()
             ss.reuseAddress = true
+            ss.bind(java.net.InetSocketAddress(port))
             serverSocket = ss
             while (running) {
                 val socket = try {

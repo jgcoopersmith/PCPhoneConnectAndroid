@@ -14,7 +14,6 @@ public partial class MainWindow : Window
     private int _srcW, _srcH;
 
     // Pointer-gesture tracking
-    private Point? _downPoint;          // relative to ScreenImage
     private (double x, double y)? _downNorm;
     private readonly Stopwatch _pressTimer = new();
 
@@ -132,7 +131,7 @@ public partial class MainWindow : Window
 
     // ---------------- Connection ----------------
 
-    private void OnConnectClick(object sender, RoutedEventArgs e)
+    private async void OnConnectClick(object sender, RoutedEventArgs e)
     {
         if (_client.IsConnected)
         {
@@ -154,17 +153,22 @@ public partial class MainWindow : Window
         }
 
         Status($"Connecting to {host}:{port}…");
+        HistoryPopup.IsOpen = false;
+        ConnectButton.IsEnabled = false;
         try
         {
-            _client.Connect(host, port);
+            await Task.Run(() => _client.Connect(host, port)); // off the UI thread
             ConnectButton.Content = "Disconnect";
             Status($"Connected to {host}:{port}. Waiting for screen…");
             RememberConnection(host, port);
-            HistoryPopup.IsOpen = false;
         }
         catch (Exception ex)
         {
             Status($"Could not connect: {ex.Message}");
+        }
+        finally
+        {
+            ConnectButton.IsEnabled = true;
         }
     }
 
@@ -253,9 +257,7 @@ public partial class MainWindow : Window
     private void OnScreenMouseDown(object sender, MouseButtonEventArgs e)
     {
         if (!_client.IsConnected) return;
-        var p = e.GetPosition(ScreenImage);
-        _downPoint = p;
-        _downNorm = ToNormalized(p);
+        _downNorm = ToNormalized(e.GetPosition(ScreenImage));
         _dragging = false;
         _pressTimer.Restart();
         _segTimer.Restart();
@@ -402,6 +404,8 @@ public partial class MainWindow : Window
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
         if (!_client.IsConnected) return;
+        // Don't hijack keys while a text field has focus — let it edit normally.
+        if (Keyboard.FocusedElement is TextBox) return;
         switch (e.Key)
         {
             case Key.Escape: _recentsMode = false; _client.Key("back"); e.Handled = true; break;

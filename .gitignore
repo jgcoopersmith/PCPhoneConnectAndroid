@@ -1,0 +1,22 @@
+# ---- Android ----
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/captures/
+android/local.properties
+android/*.iml
+android/.idea/
+*.keystore
+*.jks
+keystore.properties
+
+# ---- .NET / WPF ----
+pc/**/bin/
+pc/**/obj/
+pc/.vs/
+*.user
+
+# ---- misc ----
+.DS_Store
+Thumbs.db

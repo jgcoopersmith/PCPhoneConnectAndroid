@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PC Phone Connect</string>
+    <string name="accessibility_label">PC Phone Connect — Remote Control</string>
+    <string name="accessibility_description">Lets the paired PC inject taps, swipes and navigation actions to remotely control this device. No data leaves your local network.</string>
+</resources>

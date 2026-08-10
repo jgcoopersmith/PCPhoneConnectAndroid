@@ -1,0 +1,26 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Phone body -->
+    <path
+        android:fillColor="#4F9DFF"
+        android:pathData="M43,30 h22 a5,5 0 0 1 5,5 v38 a5,5 0 0 1 -5,5 h-22 a5,5 0 0 1 -5,-5 v-38 a5,5 0 0 1 5,-5 z" />
+    <path
+        android:fillColor="#0E1726"
+        android:pathData="M42,37 h24 v30 h-24 z" />
+    <!-- Wireless waves -->
+    <path
+        android:strokeColor="#7CF5C4"
+        android:strokeWidth="2.4"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:pathData="M70,44 a10,10 0 0 1 0,20" />
+    <path
+        android:strokeColor="#7CF5C4"
+        android:strokeWidth="2.4"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:pathData="M74,39 a16,16 0 0 1 0,30" />
+</vector>

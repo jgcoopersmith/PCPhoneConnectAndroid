@@ -1,0 +1,28 @@
+<!-- Status-bar icon: a phone with wireless waves, matching the launcher mark.
+     Status icons are drawn as a single-colour silhouette and tinted by the
+     system, so every shape here is opaque white on transparent. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Phone body -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.6,2.5 h7.2 a1.7,1.7 0 0 1 1.7,1.7 v15.6 a1.7,1.7 0 0 1 -1.7,1.7 h-7.2 a1.7,1.7 0 0 1 -1.7,-1.7 v-15.6 a1.7,1.7 0 0 1 1.7,-1.7 z" />
+
+    <!-- Wireless waves -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:pathData="M16.4,9.1 a4.6,4.6 0 0 1 0,5.8" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:pathData="M19.1,6.7 a8.2,8.2 0 0 1 0,10.6" />
+</vector>

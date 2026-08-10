@@ -433,7 +433,9 @@ class StreamService : Service() {
         val notification: Notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("PC Phone Connect")
             .setContentText("Sharing screen to your PC")
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            // The app's own mark, not the stock system transfer arrow — that read
+            // as "downloading" when nothing is being downloaded.
+            .setSmallIcon(R.drawable.ic_stat_share)
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

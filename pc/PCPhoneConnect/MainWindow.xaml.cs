@@ -80,9 +80,18 @@ public partial class MainWindow : Window
 
     // ---------------- Connection history ----------------
 
-    private void OnAddressFieldFocus(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Opens the recent-connections list. Driven by an explicit button click
+    /// rather than field focus: focus arrives on mouse-down, and the mouse-up
+    /// that followed immediately dismissed the StaysOpen="False" popup, so the
+    /// list flashed open and shut and looked like it never appeared at all.
+    /// </summary>
+    private void OnShowHistory(object sender, RoutedEventArgs e)
     {
-        if (_history.Count > 0) HistoryPopup.IsOpen = true;
+        HistoryHeader.Text = _history.Count > 0
+            ? "Recent connections"
+            : "No recent connections yet";
+        HistoryPopup.IsOpen = !HistoryPopup.IsOpen;
     }
 
     private void OnHistoryPick(object sender, MouseButtonEventArgs e)

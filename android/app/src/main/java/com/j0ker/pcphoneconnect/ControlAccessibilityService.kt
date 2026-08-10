@@ -33,7 +33,46 @@ class ControlAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) { /* passive */ }
+    /**
+     * Auto-confirms the screen-capture consent dialog. Android gives apps no way
+     * to skip that dialog, but an accessibility service may press the button —
+     * which is what removes the extra tap after Start server.
+     *
+     * Deliberately narrow: it only acts inside a short window armed by our own
+     * Start server tap, and only on a SystemUI dialog that names this app. Any
+     * other app's capture request is left alone, so this can never silently grant
+     * screen recording to something else.
+     */
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        if (System.currentTimeMillis() > autoAcceptUntil) return
+        if (event.packageName?.toString() != SYSTEM_UI) return
+        confirmCaptureDialog()
+    }
+
+    private fun confirmCaptureDialog() {
+        val root = rootInActiveWindow ?: return
+        // Only ever touch a dialog that is asking on behalf of THIS app.
+        val mine = root.findAccessibilityNodeInfosByText(getString(R.string.app_name))
+            .any { it != null }
+        if (!mine) return
+
+        for (label in CONFIRM_LABELS) {
+            val hits = root.findAccessibilityNodeInfosByText(label) ?: continue
+            for (node in hits) {
+                if (!label.equals(node.text?.toString(), ignoreCase = true)) continue
+                var target: AccessibilityNodeInfo? = node
+                var hops = 0
+                while (target != null && !target.isClickable && hops++ < 4) target = target.parent
+                if (target != null && target.isClickable && target.isEnabled) {
+                    if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        autoAcceptUntil = 0L // one shot
+                        return
+                    }
+                }
+            }
+        }
+    }
 
     override fun onInterrupt() { /* no-op */ }
 
@@ -268,6 +307,19 @@ class ControlAccessibilityService : AccessibilityService() {
     companion object {
         // Initial touch-down dwell before the first move arrives.
         private const val DOWN_SEGMENT_MS = 12L
+
+        private const val SYSTEM_UI = "com.android.systemui"
+        // Confirm button wording differs by Android version / OEM skin.
+        private val CONFIRM_LABELS = listOf("Share screen", "Start now", "Start recording")
+
+        /** Only auto-confirm while this is in the future. */
+        @Volatile
+        private var autoAcceptUntil = 0L
+
+        /** Called just before the app requests capture; expires quickly. */
+        fun armAutoAccept(windowMs: Long = 8000) {
+            autoAcceptUntil = System.currentTimeMillis() + windowMs
+        }
 
         @Volatile
         var instance: ControlAccessibilityService? = null

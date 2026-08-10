@@ -104,12 +104,12 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         if (!ControlAccessibilityService.isEnabled) {
             toast("Tip: enable the Accessibility service first for remote control")
         }
-        // The capture consent dialog cannot be skipped by an ordinary app. The
-        // PROJECT_MEDIA app-op used to allow it, but from Android 12 the system
-        // validates a real consent token, so getMediaProjection returns null
-        // without one no matter how the app-op is set (verified on Android 16).
-        // Removing the prompt needs a privileged/system install, or running the
-        // capture from a shell-side process the way scrcpy does.
+        // The dialog itself cannot be skipped by an ordinary app: from Android 12
+        // the system validates a real consent token, so getMediaProjection returns
+        // null without one however the PROJECT_MEDIA app-op is set (verified on
+        // Android 16). What we can do is let the accessibility service press the
+        // confirm button, so the dialog flashes past instead of needing a tap.
+        if (ControlAccessibilityService.isEnabled) ControlAccessibilityService.armAutoAccept()
         projectionLauncher.launch(screenCaptureIntent())
     }
 

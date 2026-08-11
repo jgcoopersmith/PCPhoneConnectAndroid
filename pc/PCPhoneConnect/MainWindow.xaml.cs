@@ -408,16 +408,22 @@ public partial class MainWindow : Window
 
     private void OnScreenMouseUp(object sender, MouseButtonEventArgs e)
     {
-        // Release capture FIRST and unconditionally. Returning early while the
-        // image still holds capture swallows every later mouse event in the
-        // window — the whole app looks frozen until it is restarted.
-        ScreenImage.ReleaseMouseCapture();
-        if (!_client.IsConnected) { _downNorm = null; _dragging = false; return; }
+        // Snapshot the gesture BEFORE touching capture: releasing it raises
+        // LostMouseCapture, whose handler clears _downNorm, which would otherwise
+        // wipe the press position and swallow every tap.
+        var start = _downNorm;
+        var upPoint = e.GetPosition(ScreenImage);
         _pressTimer.Stop();
 
-        var upPoint = e.GetPosition(ScreenImage);
-        var start = _downNorm;
+        // Release capture unconditionally. Returning early while the image still
+        // holds capture swallows every later mouse event in the window — the whole
+        // app looks frozen until it is restarted.
+        _ignoreLostCapture = true;
+        ScreenImage.ReleaseMouseCapture();
+        _ignoreLostCapture = false;
+
         _downNorm = null;
+        if (!_client.IsConnected) { _dragging = false; return; }
         if (start == null) { _dragging = false; return; }
         // Releasing past the edge of the image used to snap the gesture back to
         // the press point, cancelling the drag. Clamp to the edge instead.
@@ -485,8 +491,13 @@ public partial class MainWindow : Window
     /// deactivating). Without this the injected touch is never lifted and the
     /// phone keeps a finger held down, freezing whatever was being dragged.
     /// </summary>
+    private bool _ignoreLostCapture;
+
     private void OnScreenLostCapture(object sender, MouseEventArgs e)
     {
+        // The normal mouse-up releases capture itself and handles the gesture;
+        // only react when capture is taken away unexpectedly.
+        if (_ignoreLostCapture) return;
         if (_dragging)
         {
             _dragging = false;

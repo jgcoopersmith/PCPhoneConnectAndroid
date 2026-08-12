@@ -303,9 +303,14 @@
                    <ListBox.ItemTemplate>
                        <DataTemplate>
                            <StackPanel>
-                               <TextBlock Text="{Binding Header}" Foreground="#FFFFFF"
-                                          FontWeight="SemiBold"
-                                          TextTrimming="CharacterEllipsis" />
+                               <!-- Only the name is white; the source tag and the
+                                    time stay dim so the name is what stands out. -->
+                               <TextBlock TextTrimming="CharacterEllipsis">
+                                   <Run Text="{Binding Tag, Mode=OneWay}" Foreground="#7C89A6" />
+                                   <Run Text="{Binding Who, Mode=OneWay}" Foreground="#FFFFFF"
+                                        FontWeight="SemiBold" />
+                                   <Run Text="{Binding When, Mode=OneWay}" Foreground="#7C89A6" />
+                               </TextBlock>
                                <TextBlock Text="{Binding Body}" Foreground="#9FB0CC"
                                           TextWrapping="Wrap" Margin="0,2,0,0" />
                            </StackPanel>

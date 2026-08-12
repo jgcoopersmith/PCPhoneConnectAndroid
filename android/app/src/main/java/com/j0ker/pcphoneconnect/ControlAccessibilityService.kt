@@ -280,14 +280,19 @@ class ControlAccessibilityService : AccessibilityService() {
         applyText(node, "", 0)
     }
 
-    /** Trigger the field's IME action (Search / Send / Go / newline). */
+    /**
+     * Trigger the field's IME action (Search / Send / Go). ACTION_IME_ENTER is the
+     * clean route but plenty of fields refuse it, and the result was that Enter on
+     * the PC did nothing at all — so fall back to a newline, which submits
+     * single-line fields and inserts a break in multiline ones.
+     */
     fun imeEnter() {
         val node = focusedEditable() ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-        } else {
-            typeText("\n")
-        }
+        val submitted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            runCatching {
+                node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+            }.getOrDefault(false)
+        if (!submitted) typeText("\n")
     }
 
     /** key is one of: back, home, recents, notifications, power. */

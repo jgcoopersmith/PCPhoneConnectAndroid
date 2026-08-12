@@ -581,14 +581,16 @@ public partial class MainWindow : Window
 
     private void OnTextInputKeyDown(object sender, KeyEventArgs e)
     {
-        if (!_client.IsConnected) return;
-        if (e.Key == Key.Enter)
+        if (e.Key != Key.Enter) return;
+        if (_client.IsConnected)
         {
             _client.SetText(TypeBox.Text);   // make sure the field has the final text
             _client.Key("enter");            // fire the field's Search/Send/Go action
-            ClearTypeBoxLocal();
-            e.Handled = true;
         }
+        // Always clear, connected or not, so the box never carries the last message
+        // into the next one.
+        ClearTypeBoxLocal();
+        e.Handled = true;
         // Backspace and all editing are handled locally by the TextBox and mirrored
         // through OnTypeChanged, so no special-casing is needed.
     }
@@ -649,15 +651,16 @@ public partial class MainWindow : Window
         {
             _normalBounds = new Rect(Left, Top, Width, Height);
 
-            // Strip everything except the mirror.
+            // Strip everything except the mirror — but keep the typing bar, since
+            // typing to the phone is the main thing you still want from a widget.
             TitleBar.Visibility = Visibility.Collapsed;
             ConnectionBar.Visibility = Visibility.Collapsed;
             NavBar.Visibility = Visibility.Collapsed;
-            TextBar.Visibility = Visibility.Collapsed;
             StatusBar.Visibility = Visibility.Collapsed;
             FilesTab.Visibility = Visibility.Collapsed;
             FilePanel.Visibility = Visibility.Collapsed;
-            ContentGrid.Margin = new Thickness(0);
+            // A little padding so the kept typing bar isn't flush to the corner.
+            ContentGrid.Margin = new Thickness(6, 6, 6, 4);
 
             MinWidth = 160;
             MinHeight = 260;
@@ -669,7 +672,6 @@ public partial class MainWindow : Window
             TitleBar.Visibility = Visibility.Visible;
             ConnectionBar.Visibility = Visibility.Visible;
             NavBar.Visibility = Visibility.Visible;
-            TextBar.Visibility = Visibility.Visible;
             StatusBar.Visibility = Visibility.Visible;
             FilesTab.Visibility = Visibility.Visible;
             ContentGrid.Margin = new Thickness(16);

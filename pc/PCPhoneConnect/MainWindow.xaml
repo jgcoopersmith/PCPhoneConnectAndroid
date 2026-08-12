@@ -51,7 +51,11 @@
         </Style>
     </Window.Resources>
 
-  <Grid x:Name="RootGrid" Background="#0E1726"
+  <!-- Rounded shell, matching the look of the other widgets. Needs the window to
+       be chromeless and transparent, which it already is for real opacity. -->
+  <Border x:Name="RootBorder" CornerRadius="14" Background="#0E1726"
+          BorderBrush="#22FFFFFF" BorderThickness="1">
+  <Grid x:Name="RootGrid" Background="Transparent"
         MouseLeftButtonDown="OnRootMouseDown"
         ContextMenuOpening="OnContextMenuOpening">
     <Grid.ContextMenu>
@@ -81,7 +85,7 @@
 
    <!-- Custom title bar: the native one is gone because AllowsTransparency
         (needed for real see-through opacity) requires WindowStyle=None. -->
-   <Border x:Name="TitleBar" Grid.Row="0" Background="#16223C"
+   <Border x:Name="TitleBar" Grid.Row="0" Background="#16223C" CornerRadius="13,13,0,0"
            MouseLeftButtonDown="OnTitleBarDrag">
        <Grid>
            <Grid.ColumnDefinitions>
@@ -360,4 +364,5 @@
    </Border>
    </Grid>
   </Grid>
+  </Border>
 </Window>

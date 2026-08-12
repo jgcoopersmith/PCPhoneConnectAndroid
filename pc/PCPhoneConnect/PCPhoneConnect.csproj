@@ -10,7 +10,7 @@
     <RootNamespace>PCPhoneConnect</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>1.62</Version>
+    <Version>1.63</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +18,7 @@
   </ItemGroup>
 
 </Project>
+
 
 
 

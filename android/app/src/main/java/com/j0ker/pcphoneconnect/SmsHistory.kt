@@ -58,8 +58,8 @@ class SmsHistory(private val context: Context) {
                 var added = 0
                 while (c.moveToNext() && added < limit) {
                     val threadId = c.getLong(iId)
-                    val address = addressesFor(c.getString(iRecip).orEmpty())
                     val latest = newestInThread(threadId)
+                    val address = resolveParticipants(threadId, c.getString(iRecip).orEmpty())
 
                     // Spam shells: Google Messages moves messages it classifies as
                     // spam into its own private store, leaving a thread here with
@@ -184,6 +184,70 @@ class SmsHistory(private val context: Context) {
     }
 
     /**
+     * Who a conversation is with.
+     *
+     * The canonical address is usually the number, but an RCS group chat stores
+     * an internal blob there instead — a base32 string ending @rcs.google.com,
+     * which is what was being shown as the conversation's name. Those threads
+     * carry MMS messages, and MMS keeps its real participants in a per-message
+     * address table, so fall back to that.
+     */
+    private fun resolveParticipants(threadId: Long, recipientIds: String): String {
+        val canonical = addressesFor(recipientIds)
+        if (canonical.isNotBlank() && !canonical.contains(RCS_DOMAIN)) return canonical
+        return mmsParticipants(threadId).ifBlank { canonical }
+    }
+
+    /** Participants of the newest MMS in a thread, excluding this device. */
+    private fun mmsParticipants(threadId: Long): String {
+        val messageId = try {
+            resolver.query(
+                Uri.parse("content://mms"), arrayOf("_id"),
+                "thread_id = ?", arrayOf(threadId.toString()), "date DESC"
+            )?.use { c ->
+                if (!c.moveToFirst()) null else {
+                    val i = c.getColumnIndex("_id"); if (i >= 0) c.getLong(i) else null
+                }
+            }
+        } catch (_: Throwable) {
+            null
+        } ?: return ""
+
+        val people = LinkedHashSet<String>()
+        try {
+            resolver.query(
+                Uri.parse("content://mms/$messageId/addr"), arrayOf("address", "type"),
+                null, null, null
+            )?.use { c ->
+                val iAddr = c.getColumnIndex("address")
+                while (c.moveToNext()) {
+                    if (iAddr < 0) continue
+                    val a = c.getString(iAddr).orEmpty().trim()
+                    // insert-address-token is the placeholder for this device.
+                    if (a.isBlank() || a.equals("insert-address-token", true)) continue
+                    if (a.contains(RCS_DOMAIN)) continue
+                    if (normalise(a) == myNumberTail) continue
+                    people.add(a)
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        return people.joinToString(", ")
+    }
+
+    /** This device's own number, so it isn't listed as a participant. */
+    private val myNumberTail: String? by lazy {
+        try {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE)
+                as? android.telephony.TelephonyManager
+            @Suppress("DEPRECATION", "MissingPermission")
+            normalise(tm?.line1Number.orEmpty())
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
      * Numbers the user has blocked. Reading this is normally reserved for the
      * default SMS or dialer app, so treat a refusal as "nothing blocked" rather
      * than failing the whole listing.
@@ -291,5 +355,7 @@ class SmsHistory(private val context: Context) {
         private val PART_URI: Uri = Uri.parse("content://mms/part")
         private const val SMS_SENT = 2
         private const val MMS_SENT = 2
+        // RCS group threads keep an internal blob here rather than a number.
+        private const val RCS_DOMAIN = "@rcs.google.com"
     }
 }

@@ -75,6 +75,7 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) => ApplyWindowAlpha();
         LoadHistory();
         LoadFolders();
+        LoadHiddenNumbers();
         HistoryList.ItemsSource = _history;
 
         // Read the version from the assembly so the badge can't drift from the
@@ -1042,11 +1043,95 @@ public partial class MainWindow : Window
     {
         if (!_historyMode) return;
         MessageList.Items.Clear();
-        foreach (var t in threads) MessageList.Items.Add(new ThreadRow(t));
-        MessagesStatus.Text = threads.Count == 0
-            ? "No conversations found."
-            : $"{threads.Count} conversations — double-click to open.";
+        int hidden = 0;
+        foreach (var t in threads)
+        {
+            if (IsHidden(t)) { hidden++; continue; }
+            MessageList.Items.Add(new ThreadRow(t));
+        }
+        var shown = MessageList.Items.Count;
+        MessagesStatus.Text = shown == 0
+            ? (hidden > 0 ? $"All {hidden} conversations are hidden." : "No conversations found.")
+            : $"{shown} conversations — double-click to open" +
+              (hidden > 0 ? $", {hidden} hidden." : ". Right-click to hide one.");
     });
+
+    // ---- Hidden conversations ----
+    // The phone cannot tell us what is spam: the message store has no spam flag,
+    // and reading the system blocked-number list throws
+    // "Caller must be system, default dialer or default SMS app". So the block
+    // list lives here instead, seeded from the phone's and extended by hand.
+    private readonly HashSet<string> _hiddenNumbers = new();
+    private static readonly string HiddenPath = Path.Combine(
+        Path.GetDirectoryName(HistoryPath)!, "hidden-numbers.txt");
+
+    private bool IsHidden(SmsThread t)
+    {
+        if (_hiddenNumbers.Count == 0) return false;
+        var parts = t.Address.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(NormaliseNumber)
+            .Where(p => p.Length > 0)
+            .ToList();
+        // A group is only hidden when every participant is hidden.
+        return parts.Count > 0 && parts.All(_hiddenNumbers.Contains);
+    }
+
+    private static string NormaliseNumber(string s)
+    {
+        var digits = new string(s.Where(char.IsDigit).ToArray());
+        return digits.Length > 10 ? digits[^10..] : digits;
+    }
+
+    private void OnHideConversation(object sender, RoutedEventArgs e)
+    {
+        if (MessageList.SelectedItem is not ThreadRow row)
+        {
+            MessagesStatus.Text = "Select a conversation to hide.";
+            return;
+        }
+        var added = row.Thread.Address
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(NormaliseNumber)
+            .Where(p => p.Length > 0)
+            .ToList();
+        if (added.Count == 0) { MessagesStatus.Text = "That conversation has no number to hide."; return; }
+        foreach (var p in added) _hiddenNumbers.Add(p);
+        SaveHiddenNumbers();
+        MessageList.Items.Remove(row);
+        MessagesStatus.Text = $"Hidden. {_hiddenNumbers.Count} numbers on the hide list.";
+    }
+
+    private void OnClearHidden(object sender, RoutedEventArgs e)
+    {
+        _hiddenNumbers.Clear();
+        SaveHiddenNumbers();
+        MessagesStatus.Text = "Hide list cleared.";
+        if (_msgView == MessagesView.Threads) _client.RequestThreads();
+    }
+
+    private void LoadHiddenNumbers()
+    {
+        try
+        {
+            if (!File.Exists(HiddenPath)) return;
+            foreach (var line in File.ReadAllLines(HiddenPath))
+            {
+                var n = NormaliseNumber(line);
+                if (n.Length > 0) _hiddenNumbers.Add(n);
+            }
+        }
+        catch { /* best-effort */ }
+    }
+
+    private void SaveHiddenNumbers()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(HiddenPath)!);
+            File.WriteAllLines(HiddenPath, _hiddenNumbers);
+        }
+        catch { /* best-effort */ }
+    }
 
     private void OnThreadLoaded(long id, List<SmsMessage> messages) => Dispatcher.Invoke(() =>
     {

@@ -291,6 +291,13 @@
                <ListBox x:Name="MessageList" Background="Transparent" BorderThickness="0"
                         Foreground="#E6ECF5" HorizontalContentAlignment="Stretch"
                         MouseDoubleClick="OnMessageListDoubleClick">
+                   <ListBox.ContextMenu>
+                       <ContextMenu>
+                           <MenuItem Header="Hide this conversation" Click="OnHideConversation" />
+                           <Separator />
+                           <MenuItem Header="Clear hide list" Click="OnClearHidden" />
+                       </ContextMenu>
+                   </ListBox.ContextMenu>
                    <ListBox.ItemContainerStyle>
                        <Style TargetType="ListBoxItem">
                            <Setter Property="Padding" Value="8,6" />

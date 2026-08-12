@@ -654,7 +654,17 @@ public partial class MainWindow : Window
         {
             if (ReferenceEquals(source, ScreenImage)) return true;
             if (source is TextBox or ButtonBase or ListBox or ListBoxItem) return true;
-            source = source is Visual or Visual3D ? VisualTreeHelper.GetParent(source) : null;
+
+            // Text inside a TextBlock arrives as a Run, which is a content
+            // element rather than a Visual. Walking only the visual tree stopped
+            // dead there, so clicking a conversation's name looked like a click
+            // on nothing and toggled the widget instead of opening the thread.
+            source = source switch
+            {
+                Visual or Visual3D => VisualTreeHelper.GetParent(source),
+                FrameworkContentElement content => content.Parent,
+                _ => null,
+            };
         }
         return false;
     }

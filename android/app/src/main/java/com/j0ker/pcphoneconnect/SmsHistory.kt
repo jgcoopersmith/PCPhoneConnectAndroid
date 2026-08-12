@@ -103,6 +103,7 @@ class SmsHistory(private val context: Context) {
                         .put("date", it.dateMs)
                         .put("outgoing", it.outgoing)
                         .put("kind", it.kind)
+                        .put("sender", it.sender)
                 )
             }
         } catch (t: Throwable) {
@@ -117,7 +118,8 @@ class SmsHistory(private val context: Context) {
         val text: String,
         val dateMs: Long,
         val outgoing: Boolean,
-        val kind: String   // "SMS" or "MMS", so the PC can say where it came from
+        val kind: String,  // "SMS" or "MMS", so the PC can say where it came from
+        val sender: String // who wrote it, which matters in a group thread
     )
 
     private fun newestInThread(threadId: Long): Row? = readThread(threadId, 1).firstOrNull()
@@ -128,7 +130,7 @@ class SmsHistory(private val context: Context) {
         val uri = Uri.withAppendedPath(CONVERSATIONS_URI, threadId.toString())
         resolver.query(
             uri,
-            arrayOf("_id", "date", "body", "ct_t", "type", "msg_box"),
+            arrayOf("_id", "date", "body", "ct_t", "type", "msg_box", "address"),
             null, null, "date DESC"
         )?.use { c ->
             val iId = c.getColumnIndex("_id")
@@ -137,6 +139,7 @@ class SmsHistory(private val context: Context) {
             val iCt = c.getColumnIndex("ct_t")
             val iType = c.getColumnIndex("type")
             val iBox = c.getColumnIndex("msg_box")
+            val iAddr = c.getColumnIndex("address")
             while (c.moveToNext() && rows.size < limit) {
                 val isMms = iCt >= 0 && !c.getString(iCt).isNullOrBlank()
                 val raw = if (iDate >= 0) c.getLong(iDate) else 0L
@@ -153,10 +156,48 @@ class SmsHistory(private val context: Context) {
                 } else {
                     iType >= 0 && c.getInt(iType) == SMS_SENT
                 }
-                rows.add(Row(text, dateMs, outgoing, if (isMms) "MMS" else "SMS"))
+                // Who wrote it. Without this every incoming message in a group
+                // thread read as "Them", which tells you nothing about who spoke.
+                val from = when {
+                    outgoing -> ""
+                    isMms -> mmsSender(c.getLong(iId))
+                    iAddr >= 0 -> c.getString(iAddr).orEmpty()
+                    else -> ""
+                }
+                rows.add(
+                    Row(
+                        text, dateMs, outgoing,
+                        if (isMms) "MMS" else "SMS",
+                        if (from.isBlank()) "" else displayName(from)
+                    )
+                )
             }
         }
         return rows
+    }
+
+    /**
+     * The sender of an MMS. Its address table holds every party, distinguished by
+     * type: 137 is FROM, 151 is TO, 130 is CC — confirmed against this device.
+     */
+    private fun mmsSender(messageId: Long): String = try {
+        resolver.query(
+            Uri.parse("content://mms/$messageId/addr"), arrayOf("address", "type"),
+            null, null, null
+        )?.use { c ->
+            val iAddr = c.getColumnIndex("address")
+            val iType = c.getColumnIndex("type")
+            var found = ""
+            while (c.moveToNext() && found.isEmpty()) {
+                if (iType >= 0 && c.getInt(iType) == MMS_ADDR_FROM && iAddr >= 0) {
+                    val a = c.getString(iAddr).orEmpty().trim()
+                    if (a.isNotBlank() && !a.equals("insert-address-token", true)) found = a
+                }
+            }
+            found
+        }.orEmpty()
+    } catch (_: Throwable) {
+        ""
     }
 
     /** MMS bodies live in the part table, not on the message row. */
@@ -357,5 +398,7 @@ class SmsHistory(private val context: Context) {
         private const val MMS_SENT = 2
         // RCS group threads keep an internal blob here rather than a number.
         private const val RCS_DOMAIN = "@rcs.google.com"
+        // PDU address types: 137 = FROM, 151 = TO, 130 = CC.
+        private const val MMS_ADDR_FROM = 137
     }
 }

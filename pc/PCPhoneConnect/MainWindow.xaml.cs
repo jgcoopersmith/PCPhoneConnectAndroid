@@ -1181,7 +1181,16 @@ public partial class MainWindow : Window
     public sealed record SmsRow(SmsMessage Message)
     {
         public string Tag => $"[{Message.Kind}]  ";
-        public string Who => Message.Outgoing ? "You" : "Them";
+
+        /// <summary>
+        /// Name the actual sender. In a group thread "Them" is useless — several
+        /// people are talking — so use the per-message sender when the phone
+        /// supplied one, falling back to "Them" for older data.
+        /// </summary>
+        public string Who =>
+            Message.Outgoing ? "You"
+            : string.IsNullOrWhiteSpace(Message.Sender) ? "Them"
+            : Message.Sender;
         public string When => $"  ·  {Stamp(Message.DateMs)}";
         public string Body => Message.Text;
 

@@ -214,7 +214,8 @@ public sealed class PhoneClient : IDisposable
                             e.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "",
                             e.TryGetProperty("date", out var dt) ? dt.GetInt64() : 0,
                             e.TryGetProperty("outgoing", out var og) && og.GetBoolean(),
-                            e.TryGetProperty("kind", out var kd) ? kd.GetString() ?? "SMS" : "SMS"));
+                            e.TryGetProperty("kind", out var kd) ? kd.GetString() ?? "SMS" : "SMS",
+                            e.TryGetProperty("sender", out var sd) ? sd.GetString() ?? "" : ""));
                     }
                 }
                 ThreadLoaded?.Invoke(
@@ -636,7 +637,8 @@ public record SmsThread(
     string Kind = "SMS");
 
 /// <summary>One message inside a conversation.</summary>
-public record SmsMessage(string Text, long DateMs, bool Outgoing, string Kind = "SMS");
+public record SmsMessage(
+    string Text, long DateMs, bool Outgoing, string Kind = "SMS", string Sender = "");
 
 /// <summary>An incoming message, sourced from its notification on the phone.</summary>
 public record PhoneMessage(

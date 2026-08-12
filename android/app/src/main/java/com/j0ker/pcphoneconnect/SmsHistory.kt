@@ -228,10 +228,18 @@ class SmsHistory(private val context: Context) {
 
     private fun canonicalAddress(id: String): String? {
         addressCache[id]?.let { return it }
+        // Never read column 0: this provider ignores the projection and hands back
+        // every column, so index 0 is _id. Doing that made every conversation
+        // display its recipient id — 633, 659 — instead of a name or number.
         val value = try {
             resolver.query(
                 CANONICAL_URI, arrayOf("address"), "_id = ?", arrayOf(id), null
-            )?.use { c -> if (c.moveToFirst()) c.getString(0).orEmpty() else "" }.orEmpty()
+            )?.use { c ->
+                if (!c.moveToFirst()) "" else {
+                    val i = c.getColumnIndex("address")
+                    if (i >= 0) c.getString(i).orEmpty() else ""
+                }
+            }.orEmpty()
         } catch (_: Throwable) {
             ""
         }
@@ -259,7 +267,11 @@ class SmsHistory(private val context: Context) {
             resolver.query(
                 uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null
             )?.use { c ->
-                if (c.moveToFirst()) c.getString(0).orEmpty().ifBlank { address } else address
+                if (!c.moveToFirst()) address else {
+                    // Same rule as above: resolve by name, not by position.
+                    val i = c.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                    if (i >= 0) c.getString(i).orEmpty().ifBlank { address } else address
+                }
             } ?: address
         }
     } catch (_: Throwable) {

@@ -966,43 +966,76 @@ public partial class MainWindow : Window
     // here would use SmsManager, which downgrades RCS conversations to plain SMS
     // and never appears in the phone's own thread.
 
-    private bool _historyMode;
+    // Three views behind one list. The old design overloaded a single button to
+    // mean History / Live / back-out-of-a-thread, which left no obvious way out
+    // of an open conversation. Back is now its own control.
+    private enum MessagesView { Live, Threads, Thread }
+
+    private MessagesView _msgView = MessagesView.Live;
     private long _openThreadId;
+    private string _openThreadName = "";
+
+    private bool _historyMode => _msgView != MessagesView.Live;
 
     private void OnShowSmsHistory(object sender, RoutedEventArgs e)
     {
         if (!_client.IsConnected) { MessagesStatus.Text = "Connect to the phone first."; return; }
-        if (_historyMode && _openThreadId != 0)
-        {
-            ShowThreadList();          // inside a thread: go back to the list
-            return;
-        }
-        if (_historyMode)
-        {
-            ShowLiveMessages();        // already on the list: back to live
-            return;
-        }
+        // Always jumps to the conversation list, from wherever you are.
         ShowThreadList();
+    }
+
+    /// <summary>One step back: a thread returns to the list, the list to Live.</summary>
+    private void OnMessagesBack(object sender, RoutedEventArgs e)
+    {
+        if (_msgView == MessagesView.Thread) ShowThreadList();
+        else ShowLiveMessages();
     }
 
     private void ShowThreadList()
     {
-        _historyMode = true;
+        _msgView = MessagesView.Threads;
         _openThreadId = 0;
-        SmsHistoryButton.Content = "Live";
+        _openThreadName = "";
         MessageList.Items.Clear();
         MessagesStatus.Text = "Loading conversations…";
+        UpdateMessagesChrome();
         _client.RequestThreads();
     }
 
     private void ShowLiveMessages()
     {
-        _historyMode = false;
+        _msgView = MessagesView.Live;
         _openThreadId = 0;
-        SmsHistoryButton.Content = "History";
+        _openThreadName = "";
         MessageList.Items.Clear();
         MessagesStatus.Text = "Live messages. Newest arrive at the top.";
-        _client.RequestMessages();
+        UpdateMessagesChrome();
+        if (_client.IsConnected) _client.RequestMessages();
+    }
+
+    /// <summary>Header and buttons always say where you are and how to leave.</summary>
+    private void UpdateMessagesChrome()
+    {
+        switch (_msgView)
+        {
+            case MessagesView.Live:
+                MessagesHeading.Text = "Messages";
+                MsgBackButton.Visibility = Visibility.Collapsed;
+                SmsHistoryButton.Content = "History";
+                break;
+            case MessagesView.Threads:
+                MessagesHeading.Text = "Conversations";
+                MsgBackButton.Visibility = Visibility.Visible;
+                MsgBackButton.ToolTip = "Back to live messages";
+                SmsHistoryButton.Content = "Refresh";
+                break;
+            case MessagesView.Thread:
+                MessagesHeading.Text = _openThreadName.Length > 0 ? _openThreadName : "Conversation";
+                MsgBackButton.Visibility = Visibility.Visible;
+                MsgBackButton.ToolTip = "Back to conversations";
+                SmsHistoryButton.Content = "History";
+                break;
+        }
     }
 
     private void OnThreadsListed(List<SmsThread> threads) => Dispatcher.Invoke(() =>
@@ -1018,9 +1051,11 @@ public partial class MainWindow : Window
     private void OnThreadLoaded(long id, List<SmsMessage> messages) => Dispatcher.Invoke(() =>
     {
         _openThreadId = id;
+        _msgView = MessagesView.Thread;
+        UpdateMessagesChrome();
         MessageList.Items.Clear();
         foreach (var m in messages) MessageList.Items.Add(new SmsRow(m));
-        MessagesStatus.Text = $"{messages.Count} messages — History goes back to the list. " +
+        MessagesStatus.Text = $"{messages.Count} messages — ◀ goes back. " +
                               "Replies still go through a live notification.";
         if (MessageList.Items.Count > 0) MessageList.ScrollIntoView(MessageList.Items[^1]);
     });
@@ -1029,7 +1064,8 @@ public partial class MainWindow : Window
     {
         if (MessageList.SelectedItem is ThreadRow row)
         {
-            MessagesStatus.Text = $"Loading {row.Thread.Name}…";
+            _openThreadName = row.Thread.Name.Length > 0 ? row.Thread.Name : row.Thread.Address;
+            MessagesStatus.Text = $"Loading {_openThreadName}…";
             _client.RequestThread(row.Thread.Id);
         }
     }
@@ -1042,7 +1078,7 @@ public partial class MainWindow : Window
             var who = string.IsNullOrWhiteSpace(Thread.Name) ? Thread.Address : Thread.Name;
             var when = Stamp(Thread.DateMs);
             var prefix = Thread.Outgoing ? "You: " : "";
-            return $"{who}  ·  {when}\n{prefix}{Thread.Snippet}";
+            return $"[{Thread.Kind}]  {who}  ·  {when}\n{prefix}{Thread.Snippet}";
         }
     }
 
@@ -1050,7 +1086,8 @@ public partial class MainWindow : Window
     private sealed record SmsRow(SmsMessage Message)
     {
         public override string ToString() =>
-            $"{(Message.Outgoing ? "You" : "Them")}  ·  {Stamp(Message.DateMs)}\n{Message.Text}";
+            $"[{Message.Kind}]  {(Message.Outgoing ? "You" : "Them")}  ·  " +
+            $"{Stamp(Message.DateMs)}\n{Message.Text}";
     }
 
     private static string Stamp(long ms)
@@ -1065,12 +1102,14 @@ public partial class MainWindow : Window
     {
         public override string ToString()
         {
-            var who = string.IsNullOrWhiteSpace(Message.Sender) ? Message.App : Message.Sender;
+            // The app name is the source: Messages, Signal, WhatsApp and so on.
+            var source = string.IsNullOrWhiteSpace(Message.App) ? "?" : Message.App;
+            var who = string.IsNullOrWhiteSpace(Message.Sender) ? source : Message.Sender;
             var when = Message.PostedAtMs > 0
                 ? DateTimeOffset.FromUnixTimeMilliseconds(Message.PostedAtMs).LocalDateTime.ToString("HH:mm")
                 : "";
             var flag = Message.CanReply ? "" : "  (no reply)";
-            return $"{who}  ·  {when}{flag}\n{Message.Text}";
+            return $"[{source}]  {who}  ·  {when}{flag}\n{Message.Text}";
         }
     }
 

@@ -195,7 +195,8 @@ public sealed class PhoneClient : IDisposable
                             e.TryGetProperty("address", out var ad) ? ad.GetString() ?? "" : "",
                             e.TryGetProperty("snippet", out var sn) ? sn.GetString() ?? "" : "",
                             e.TryGetProperty("date", out var dt) ? dt.GetInt64() : 0,
-                            e.TryGetProperty("outgoing", out var og) && og.GetBoolean()));
+                            e.TryGetProperty("outgoing", out var og) && og.GetBoolean(),
+                            e.TryGetProperty("kind", out var kd) ? kd.GetString() ?? "SMS" : "SMS"));
                     }
                 }
                 ThreadsListed?.Invoke(threads);
@@ -212,7 +213,8 @@ public sealed class PhoneClient : IDisposable
                         msgs.Add(new SmsMessage(
                             e.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "",
                             e.TryGetProperty("date", out var dt) ? dt.GetInt64() : 0,
-                            e.TryGetProperty("outgoing", out var og) && og.GetBoolean()));
+                            e.TryGetProperty("outgoing", out var og) && og.GetBoolean(),
+                            e.TryGetProperty("kind", out var kd) ? kd.GetString() ?? "SMS" : "SMS"));
                     }
                 }
                 ThreadLoaded?.Invoke(
@@ -630,10 +632,11 @@ public record DeviceHeader(
 
 /// <summary>A conversation in the phone's SMS store.</summary>
 public record SmsThread(
-    long Id, string Name, string Address, string Snippet, long DateMs, bool Outgoing);
+    long Id, string Name, string Address, string Snippet, long DateMs, bool Outgoing,
+    string Kind = "SMS");
 
 /// <summary>One message inside a conversation.</summary>
-public record SmsMessage(string Text, long DateMs, bool Outgoing);
+public record SmsMessage(string Text, long DateMs, bool Outgoing, string Kind = "SMS");
 
 /// <summary>An incoming message, sourced from its notification on the phone.</summary>
 public record PhoneMessage(

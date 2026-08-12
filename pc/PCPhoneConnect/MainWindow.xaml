@@ -269,8 +269,14 @@
            </Grid.RowDefinitions>
 
            <Grid Grid.Row="0" Margin="0,0,0,10">
-               <TextBlock Text="Messages" Foreground="#E6ECF5"
-                          FontSize="17" FontWeight="Bold" VerticalAlignment="Center" />
+               <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                   <Button x:Name="MsgBackButton" Content="◀" Width="30" Padding="0"
+                           Margin="0,0,8,0" Visibility="Collapsed" Click="OnMessagesBack"
+                           ToolTip="Back" />
+                   <TextBlock x:Name="MessagesHeading" Text="Messages" Foreground="#E6ECF5"
+                              FontSize="17" FontWeight="Bold" VerticalAlignment="Center"
+                              TextTrimming="CharacterEllipsis" MaxWidth="200" />
+               </StackPanel>
                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                    <Button x:Name="SmsHistoryButton" Content="History" Padding="10,6"
                            Click="OnShowSmsHistory" ToolTip="Browse SMS conversations on the phone" />

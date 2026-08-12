@@ -68,6 +68,7 @@ class SmsHistory(private val context: Context) {
                             .put("date", if (iDate >= 0) c.getLong(iDate) else 0L)
                             .put("outgoing", latest?.outgoing ?: false)
                             .put("count", if (iCount >= 0) c.getInt(iCount) else 0)
+                            .put("kind", latest?.kind ?: "SMS")
                     )
                     added++
                 }
@@ -90,6 +91,7 @@ class SmsHistory(private val context: Context) {
                         .put("text", it.text)
                         .put("date", it.dateMs)
                         .put("outgoing", it.outgoing)
+                        .put("kind", it.kind)
                 )
             }
         } catch (t: Throwable) {
@@ -100,7 +102,12 @@ class SmsHistory(private val context: Context) {
 
     // ---------------- Reading ----------------
 
-    private data class Row(val text: String, val dateMs: Long, val outgoing: Boolean)
+    private data class Row(
+        val text: String,
+        val dateMs: Long,
+        val outgoing: Boolean,
+        val kind: String   // "SMS" or "MMS", so the PC can say where it came from
+    )
 
     private fun newestInThread(threadId: Long): Row? = readThread(threadId, 1).firstOrNull()
 
@@ -135,7 +142,7 @@ class SmsHistory(private val context: Context) {
                 } else {
                     iType >= 0 && c.getInt(iType) == SMS_SENT
                 }
-                rows.add(Row(text, dateMs, outgoing))
+                rows.add(Row(text, dateMs, outgoing, if (isMms) "MMS" else "SMS"))
             }
         }
         return rows

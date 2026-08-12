@@ -272,6 +272,8 @@
                <TextBlock Text="Messages" Foreground="#E6ECF5"
                           FontSize="17" FontWeight="Bold" VerticalAlignment="Center" />
                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                   <Button x:Name="SmsHistoryButton" Content="History" Padding="10,6"
+                           Click="OnShowSmsHistory" ToolTip="Browse SMS conversations on the phone" />
                    <Button Content="⟳" Width="30" Padding="0" Click="OnRefreshMessages"
                            ToolTip="Fetch conversations currently on the phone" />
                    <Button Content="✕" Width="30" Padding="0" Click="OnToggleMessages" />
@@ -281,7 +283,8 @@
            <Border Grid.Row="1" Background="#0B1424" BorderBrush="#2B3B5E" BorderThickness="1"
                    CornerRadius="6">
                <ListBox x:Name="MessageList" Background="Transparent" BorderThickness="0"
-                        Foreground="#E6ECF5" HorizontalContentAlignment="Stretch">
+                        Foreground="#E6ECF5" HorizontalContentAlignment="Stretch"
+                        MouseDoubleClick="OnMessageListDoubleClick">
                    <ListBox.ItemContainerStyle>
                        <Style TargetType="ListBoxItem">
                            <Setter Property="Padding" Value="8,6" />

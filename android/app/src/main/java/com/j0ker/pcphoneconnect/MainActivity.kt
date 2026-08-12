@@ -29,6 +29,11 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
     private val notifPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* result ignored */ }
 
+    private val smsPermission =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            refreshUi(StreamService.isRunning)
+        }
+
     private val projectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK && result.data != null) {
@@ -82,6 +87,12 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
                 startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 toast("Turn on \"PC Phone Connect\"")
             }
+        }
+
+        binding.enableSmsButton.setOnClickListener {
+            smsPermission.launch(
+                arrayOf(Manifest.permission.READ_SMS, Manifest.permission.READ_CONTACTS)
+            )
         }
 
         binding.startButton.setOnClickListener { requestStart() }
@@ -267,6 +278,11 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         val msgsOn = hasNotificationAccess()
         binding.messagesStatus.text = "Message access: " + if (msgsOn) "ON" else "OFF"
         binding.enableMessagesButton.isEnabled = !msgsOn
+
+        val smsOn = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) ==
+            PackageManager.PERMISSION_GRANTED
+        binding.smsStatus.text = "SMS history: " + if (smsOn) "ON" else "OFF"
+        binding.enableSmsButton.isEnabled = !smsOn
         if (running) {
             val port = currentPort()
             val ips = localIpv4Addresses()

@@ -10,6 +10,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Read-only SMS history for the PC's conversation view. Sending still goes
+         through the messaging app's own notification reply, so RCS is preserved. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
     <!-- Lets the app switch its own accessibility service back on, which Android
          turns off on every app update. Not grantable from inside the app; it is a
          development-protection permission, so it is granted once over adb:

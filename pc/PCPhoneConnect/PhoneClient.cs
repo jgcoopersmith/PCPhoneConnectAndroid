@@ -147,6 +147,17 @@ public sealed class PhoneClient : IDisposable
         Send("{\"t\":\"reply\",\"key\":" + JsonSerializer.Serialize(key) +
              ",\"text\":" + JsonSerializer.Serialize(text) + "}");
 
+    public event Action<List<SmsThread>>? ThreadsListed;
+    public event Action<long, List<SmsMessage>>? ThreadLoaded;
+
+    /// <summary>List recent SMS conversations from the phone's message store.</summary>
+    public void RequestThreads(int limit = 40) =>
+        Send("{\"t\":\"threads\",\"limit\":" + limit + "}");
+
+    /// <summary>Load the messages inside one conversation.</summary>
+    public void RequestThread(long id, int limit = 100) =>
+        Send("{\"t\":\"thread\",\"id\":" + id + ",\"limit\":" + limit + "}");
+
     private void HandleMessage(string json)
     {
         try
@@ -154,12 +165,58 @@ public sealed class PhoneClient : IDisposable
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            // Reply acknowledgement rather than an incoming message.
-            if (root.TryGetProperty("r", out var kind) && kind.GetString() == "reply")
+            var kindName = root.TryGetProperty("r", out var kind) ? kind.GetString() : null;
+
+            if (kindName == "reply")
             {
                 ReplyResult?.Invoke(
                     root.TryGetProperty("key", out var rk) ? rk.GetString() ?? "" : "",
                     root.TryGetProperty("ok", out var ok) && ok.GetBoolean());
+                return;
+            }
+
+            if (kindName == "smserr")
+            {
+                TransferError?.Invoke(root.TryGetProperty("m", out var em)
+                    ? em.GetString() ?? "SMS error" : "SMS error");
+                return;
+            }
+
+            if (kindName == "threads")
+            {
+                var threads = new List<SmsThread>();
+                if (root.TryGetProperty("threads", out var arr))
+                {
+                    foreach (var e in arr.EnumerateArray())
+                    {
+                        threads.Add(new SmsThread(
+                            e.GetProperty("id").GetInt64(),
+                            e.TryGetProperty("name", out var nm) ? nm.GetString() ?? "" : "",
+                            e.TryGetProperty("address", out var ad) ? ad.GetString() ?? "" : "",
+                            e.TryGetProperty("snippet", out var sn) ? sn.GetString() ?? "" : "",
+                            e.TryGetProperty("date", out var dt) ? dt.GetInt64() : 0,
+                            e.TryGetProperty("outgoing", out var og) && og.GetBoolean()));
+                    }
+                }
+                ThreadsListed?.Invoke(threads);
+                return;
+            }
+
+            if (kindName == "thread")
+            {
+                var msgs = new List<SmsMessage>();
+                if (root.TryGetProperty("messages", out var arr))
+                {
+                    foreach (var e in arr.EnumerateArray())
+                    {
+                        msgs.Add(new SmsMessage(
+                            e.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "",
+                            e.TryGetProperty("date", out var dt) ? dt.GetInt64() : 0,
+                            e.TryGetProperty("outgoing", out var og) && og.GetBoolean()));
+                    }
+                }
+                ThreadLoaded?.Invoke(
+                    root.TryGetProperty("id", out var tid) ? tid.GetInt64() : 0, msgs);
                 return;
             }
 
@@ -389,7 +446,8 @@ public sealed class PhoneClient : IDisposable
                 // Older builds don't report this; assume control works so we don't
                 // warn about a phone that is actually fine.
                 !root.TryGetProperty("control", out var ct) || ct.ValueKind != JsonValueKind.False,
-                root.TryGetProperty("messages", out var ms) && ms.ValueKind == JsonValueKind.True);
+                root.TryGetProperty("messages", out var ms) && ms.ValueKind == JsonValueKind.True,
+                root.TryGetProperty("smsHistory", out var hist) && hist.ValueKind == JsonValueKind.True);
         }
         catch
         {
@@ -568,7 +626,14 @@ public record DeviceHeader(
     string Name, int Width, int Height, int StreamWidth, int StreamHeight,
     string Model = "", string AndroidVersion = "",
     bool FileAccess = false, string StorageRoot = "", bool ControlEnabled = true,
-    bool MessagesEnabled = false);
+    bool MessagesEnabled = false, bool SmsHistory = false);
+
+/// <summary>A conversation in the phone's SMS store.</summary>
+public record SmsThread(
+    long Id, string Name, string Address, string Snippet, long DateMs, bool Outgoing);
+
+/// <summary>One message inside a conversation.</summary>
+public record SmsMessage(string Text, long DateMs, bool Outgoing);
 
 /// <summary>An incoming message, sourced from its notification on the phone.</summary>
 public record PhoneMessage(

@@ -74,6 +74,15 @@ class StreamService : Service() {
     // Framed writer for the connected PC, so control handlers can reply.
     @Volatile private var sender: ((Int, ByteArray) -> Unit)? = null
 
+    // Provider queries can take a moment; keep them off the control thread so
+    // taps and swipes stay responsive while history loads.
+    private val smsHistory by lazy { SmsHistory(this) }
+    private val smsWorker by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "pc-sms").apply { isDaemon = true }
+        }
+    }
+
     private fun sendFramedSafe(type: Int, payload: ByteArray) {
         try { sender?.invoke(type, payload) } catch (_: Throwable) { }
     }
@@ -310,6 +319,7 @@ class StreamService : Service() {
                 // PC mirrors happily while every tap is silently discarded.
                 .put("control", ControlAccessibilityService.isEnabled)
                 .put("messages", MessageNotificationService.isEnabled)
+                .put("smsHistory", smsHistory.hasAccess)
                 .toString()
                 .toByteArray(Charsets.UTF_8)
             sendFramed(TYPE_HEADER, header)
@@ -382,6 +392,26 @@ class StreamService : Service() {
                     // PC asked for whatever conversations are on screen now.
                     MessageNotificationService.instance?.currentMessages()?.forEach { m ->
                         sendFramedSafe(TYPE_MESSAGE, m.toString().toByteArray(Charsets.UTF_8))
+                    }
+                    return
+                }
+                "threads" -> {
+                    smsWorker.execute {
+                        sendFramedSafe(
+                            TYPE_MESSAGE,
+                            smsHistory.threads(o.optInt("limit", 40)).toString()
+                                .toByteArray(Charsets.UTF_8)
+                        )
+                    }
+                    return
+                }
+                "thread" -> {
+                    smsWorker.execute {
+                        sendFramedSafe(
+                            TYPE_MESSAGE,
+                            smsHistory.thread(o.optLong("id"), o.optInt("limit", 100)).toString()
+                                .toByteArray(Charsets.UTF_8)
+                        )
                     }
                     return
                 }

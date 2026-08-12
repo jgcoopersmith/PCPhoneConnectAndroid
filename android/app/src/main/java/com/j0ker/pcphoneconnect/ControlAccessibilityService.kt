@@ -298,9 +298,26 @@ class ControlAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Find and press an app's send control. Matched on the accessibility label
-     * rather than a resource id so it works across Messages, chat apps and the
-     * like. Bounded so a deep hierarchy can't stall the control thread.
+     * Does this node look like the control that sends the message?
+     *
+     * Google Messages is the case that matters and it is the awkward one: its
+     * send button is a Compose view carrying NO text and NO content description
+     * at all, identified only by the view id "Compose:Draft:Send". Matching on
+     * the label alone therefore never found it, so the view id is checked too.
+     */
+    private fun looksLikeSend(node: AccessibilityNodeInfo): Boolean {
+        val label = (node.contentDescription ?: node.text)?.toString()?.trim().orEmpty()
+        if (label.isNotEmpty() && SEND_LABELS.any { label.equals(it, ignoreCase = true) }) return true
+
+        // Ids look like "Compose:Draft:Send" or "com.example:id/send_button".
+        val id = node.viewIdResourceName ?: return false
+        val leaf = id.substringAfterLast('/').substringAfterLast(':')
+        return SEND_IDS.any { leaf.equals(it, ignoreCase = true) }
+    }
+
+    /**
+     * Find and press an app's send control. Bounded so a deep hierarchy can't
+     * stall the control thread.
      */
     private fun clickSendButton(): Boolean {
         val root = rootInActiveWindow ?: return false
@@ -313,8 +330,7 @@ class ControlAccessibilityService : AccessibilityService() {
             visited++
             if (depth > MAX_SEND_DEPTH) continue
 
-            val label = (node.contentDescription ?: node.text)?.toString()?.trim().orEmpty()
-            if (label.isNotEmpty() && SEND_LABELS.any { label.equals(it, ignoreCase = true) }) {
+            if (looksLikeSend(node)) {
                 // The label often sits on a non-clickable child; walk up for the target.
                 var target: AccessibilityNodeInfo? = node
                 var hops = 0
@@ -353,8 +369,15 @@ class ControlAccessibilityService : AccessibilityService() {
         private val SEND_LABELS = listOf(
             "Send", "Send message", "Send SMS", "Send text", "Send RCS message"
         )
-        private const val MAX_SEND_SCAN = 400
-        private const val MAX_SEND_DEPTH = 25
+        // Trailing segment of the view id. "Compose:Draft:Send" is Google Messages;
+        // the rest are the usual Android naming. Compared whole so "resend" or
+        // "send_feedback" cannot match.
+        private val SEND_IDS = listOf(
+            "Send", "send", "send_button", "sendButton",
+            "send_message_button", "send_message", "btn_send"
+        )
+        private const val MAX_SEND_SCAN = 1200
+        private const val MAX_SEND_DEPTH = 30
 
         private const val SYSTEM_UI = "com.android.systemui"
         // Confirm button wording differs by Android version / OEM skin.

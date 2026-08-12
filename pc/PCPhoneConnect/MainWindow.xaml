@@ -298,6 +298,19 @@
                            <MenuItem Header="Clear hide list" Click="OnClearHidden" />
                        </ContextMenu>
                    </ListBox.ContextMenu>
+                   <!-- Two lines per row: who it is in white, the message dimmer
+                        behind it, so the name or number is what you read first. -->
+                   <ListBox.ItemTemplate>
+                       <DataTemplate>
+                           <StackPanel>
+                               <TextBlock Text="{Binding Header}" Foreground="#FFFFFF"
+                                          FontWeight="SemiBold"
+                                          TextTrimming="CharacterEllipsis" />
+                               <TextBlock Text="{Binding Body}" Foreground="#9FB0CC"
+                                          TextWrapping="Wrap" Margin="0,2,0,0" />
+                           </StackPanel>
+                       </DataTemplate>
+                   </ListBox.ItemTemplate>
                    <ListBox.ItemContainerStyle>
                        <Style TargetType="ListBoxItem">
                            <Setter Property="Padding" Value="8,6" />

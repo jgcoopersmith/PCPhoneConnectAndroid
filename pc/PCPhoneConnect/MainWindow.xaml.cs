@@ -1156,23 +1156,33 @@ public partial class MainWindow : Window
     }
 
     /// <summary>A conversation in the phone's SMS store.</summary>
-    private sealed record ThreadRow(SmsThread Thread)
+    public sealed record ThreadRow(SmsThread Thread)
     {
-        public override string ToString()
+        /// <summary>Who the conversation is with — drawn white.</summary>
+        public string Header
         {
-            var who = string.IsNullOrWhiteSpace(Thread.Name) ? Thread.Address : Thread.Name;
-            var when = Stamp(Thread.DateMs);
-            var prefix = Thread.Outgoing ? "You: " : "";
-            return $"[{Thread.Kind}]  {who}  ·  {when}\n{prefix}{Thread.Snippet}";
+            get
+            {
+                var who = string.IsNullOrWhiteSpace(Thread.Name) ? Thread.Address : Thread.Name;
+                if (string.IsNullOrWhiteSpace(who)) who = "(unknown)";
+                return $"[{Thread.Kind}]  {who}  ·  {Stamp(Thread.DateMs)}";
+            }
         }
+
+        public string Body => (Thread.Outgoing ? "You: " : "") + Thread.Snippet;
+
+        public override string ToString() => $"{Header}\n{Body}";
     }
 
     /// <summary>One stored message.</summary>
-    private sealed record SmsRow(SmsMessage Message)
+    public sealed record SmsRow(SmsMessage Message)
     {
-        public override string ToString() =>
-            $"[{Message.Kind}]  {(Message.Outgoing ? "You" : "Them")}  ·  " +
-            $"{Stamp(Message.DateMs)}\n{Message.Text}";
+        public string Header =>
+            $"[{Message.Kind}]  {(Message.Outgoing ? "You" : "Them")}  ·  {Stamp(Message.DateMs)}";
+
+        public string Body => Message.Text;
+
+        public override string ToString() => $"{Header}\n{Body}";
     }
 
     private static string Stamp(long ms)
@@ -1183,19 +1193,27 @@ public partial class MainWindow : Window
     }
 
     /// <summary>One conversation as shown in the list.</summary>
-    private sealed record MessageRow(PhoneMessage Message)
+    public sealed record MessageRow(PhoneMessage Message)
     {
-        public override string ToString()
+        public string Header
         {
-            // The app name is the source: Messages, Signal, WhatsApp and so on.
-            var source = string.IsNullOrWhiteSpace(Message.App) ? "?" : Message.App;
-            var who = string.IsNullOrWhiteSpace(Message.Sender) ? source : Message.Sender;
-            var when = Message.PostedAtMs > 0
-                ? DateTimeOffset.FromUnixTimeMilliseconds(Message.PostedAtMs).LocalDateTime.ToString("HH:mm")
-                : "";
-            var flag = Message.CanReply ? "" : "  (no reply)";
-            return $"[{source}]  {who}  ·  {when}{flag}\n{Message.Text}";
+            get
+            {
+                // The app name is the source: Messages, Signal, WhatsApp and so on.
+                var source = string.IsNullOrWhiteSpace(Message.App) ? "?" : Message.App;
+                var who = string.IsNullOrWhiteSpace(Message.Sender) ? source : Message.Sender;
+                var when = Message.PostedAtMs > 0
+                    ? DateTimeOffset.FromUnixTimeMilliseconds(Message.PostedAtMs)
+                        .LocalDateTime.ToString("HH:mm")
+                    : "";
+                var flag = Message.CanReply ? "" : "  (no reply)";
+                return $"[{source}]  {who}  ·  {when}{flag}";
+            }
         }
+
+        public string Body => Message.Text;
+
+        public override string ToString() => $"{Header}\n{Body}";
     }
 
     // ---------------- File transfer panel ----------------

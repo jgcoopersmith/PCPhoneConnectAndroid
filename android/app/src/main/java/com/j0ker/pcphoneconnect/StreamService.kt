@@ -415,6 +415,16 @@ class StreamService : Service() {
                     }
                     return
                 }
+                "sendsms" -> {
+                    smsWorker.execute {
+                        sendFramedSafe(
+                            TYPE_MESSAGE,
+                            smsHistory.send(o.optString("to"), o.optString("text"))
+                                .toString().toByteArray(Charsets.UTF_8)
+                        )
+                    }
+                    return
+                }
                 "reply" -> {
                     val ok = MessageNotificationService.instance
                         ?.reply(o.optString("key"), o.optString("text")) ?: false

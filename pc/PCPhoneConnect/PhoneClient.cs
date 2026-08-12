@@ -149,6 +149,7 @@ public sealed class PhoneClient : IDisposable
 
     public event Action<List<SmsThread>>? ThreadsListed;
     public event Action<long, List<SmsMessage>>? ThreadLoaded;
+    public event Action<bool, string>? SmsSent;   // ok, message
 
     /// <summary>List recent SMS conversations from the phone's message store.</summary>
     public void RequestThreads(int limit = 40) =>
@@ -157,6 +158,11 @@ public sealed class PhoneClient : IDisposable
     /// <summary>Load the messages inside one conversation.</summary>
     public void RequestThread(long id, int limit = 100) =>
         Send("{\"t\":\"thread\",\"id\":" + id + ",\"limit\":" + limit + "}");
+
+    /// <summary>Send a plain SMS, for threads with no live notification to reply to.</summary>
+    public void SendSms(string to, string text) =>
+        Send("{\"t\":\"sendsms\",\"to\":" + JsonSerializer.Serialize(to) +
+             ",\"text\":" + JsonSerializer.Serialize(text) + "}");
 
     private void HandleMessage(string json)
     {
@@ -172,6 +178,14 @@ public sealed class PhoneClient : IDisposable
                 ReplyResult?.Invoke(
                     root.TryGetProperty("key", out var rk) ? rk.GetString() ?? "" : "",
                     root.TryGetProperty("ok", out var ok) && ok.GetBoolean());
+                return;
+            }
+
+            if (kindName == "sent")
+            {
+                SmsSent?.Invoke(
+                    root.TryGetProperty("ok", out var sok) && sok.GetBoolean(),
+                    root.TryGetProperty("m", out var sm) ? sm.GetString() ?? "" : "");
                 return;
             }
 

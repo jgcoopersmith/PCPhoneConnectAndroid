@@ -5,6 +5,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.ContactsContract
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
@@ -89,6 +90,46 @@ class SmsHistory(private val context: Context) {
         }
         return JSONObject().put("r", "threads").put("threads", out)
     }
+
+    /**
+     * Send a plain SMS to one recipient.
+     *
+     * This is the fallback for history threads, where there is no notification
+     * left to reply through. It really is SMS: an RCS conversation will receive
+     * it as a green-bubble text, and because this app is not the default SMS app
+     * it cannot write to the message store, so the sent message will not appear
+     * in the phone's own thread or in this history. Replying to a live
+     * notification avoids both problems and is preferred where possible.
+     */
+    fun send(to: String, text: String): JSONObject {
+        if (to.isBlank() || text.isBlank()) return sendResult(false, "Nothing to send.")
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            return sendResult(false, "SMS sending not granted on the phone.")
+        }
+        return try {
+            val manager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(android.telephony.SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION") android.telephony.SmsManager.getDefault()
+            } ?: return sendResult(false, "No SMS service available.")
+
+            // Long messages have to be split or they are silently truncated.
+            val parts = manager.divideMessage(text)
+            if (parts.size > 1) {
+                manager.sendMultipartTextMessage(to, null, parts, null, null)
+            } else {
+                manager.sendTextMessage(to, null, text, null, null)
+            }
+            sendResult(true, "Sent as SMS to $to")
+        } catch (t: Throwable) {
+            sendResult(false, "Send failed: ${t.message}")
+        }
+    }
+
+    private fun sendResult(ok: Boolean, message: String) =
+        JSONObject().put("r", "sent").put("ok", ok).put("m", message)
 
     /** Messages in one conversation, oldest first so it reads top to bottom. */
     fun thread(threadId: Long, limit: Int = 100): JSONObject {

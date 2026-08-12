@@ -14,6 +14,9 @@
          through the messaging app's own notification reply, so RCS is preserved. -->
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Sending from a history thread, where there is no notification to reply
+         to. Goes out as plain SMS: see SmsHistory for what that costs. -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
 
     <!-- Package visibility. Without it getApplicationLabel fails for other apps,
          so a message showed as "com.google.android.apps.messaging" instead of

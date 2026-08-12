@@ -91,7 +91,11 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
 
         binding.enableSmsButton.setOnClickListener {
             smsPermission.launch(
-                arrayOf(Manifest.permission.READ_SMS, Manifest.permission.READ_CONTACTS)
+                arrayOf(
+                    Manifest.permission.READ_SMS,
+                    Manifest.permission.READ_CONTACTS,
+                    Manifest.permission.SEND_SMS
+                )
             )
         }
 

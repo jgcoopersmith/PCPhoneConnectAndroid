@@ -54,11 +54,22 @@ class SmsHistory(private val context: Context) {
                 val iDate = c.getColumnIndex("date")
                 val iRecip = c.getColumnIndex("recipient_ids")
                 val iCount = c.getColumnIndex("message_count")
+                val blocked = blockedNumbers()
                 var added = 0
                 while (c.moveToNext() && added < limit) {
                     val threadId = c.getLong(iId)
                     val address = addressesFor(c.getString(iRecip).orEmpty())
                     val latest = newestInThread(threadId)
+
+                    // Spam shells: Google Messages moves messages it classifies as
+                    // spam into its own private store, leaving a thread here with
+                    // nothing readable in it. They showed as blank rows from
+                    // unknown numbers, so drop threads with no messages at all.
+                    if (latest == null) continue
+
+                    // And drop conversations from numbers the user has blocked.
+                    if (isBlocked(address, blocked)) continue
+
                     out.put(
                         JSONObject()
                             .put("id", threadId)
@@ -170,6 +181,40 @@ class SmsHistory(private val context: Context) {
         } catch (_: Throwable) {
         }
         return sb.toString().trim()
+    }
+
+    /**
+     * Numbers the user has blocked. Reading this is normally reserved for the
+     * default SMS or dialer app, so treat a refusal as "nothing blocked" rather
+     * than failing the whole listing.
+     */
+    private fun blockedNumbers(): Set<String> = try {
+        val set = HashSet<String>()
+        resolver.query(
+            Uri.parse("content://com.android.blockednumber/blocked"),
+            arrayOf("original_number"), null, null, null
+        )?.use { c ->
+            while (c.moveToNext()) {
+                normalise(c.getString(0).orEmpty())?.let { set.add(it) }
+            }
+        }
+        set
+    } catch (_: Throwable) {
+        emptySet()
+    }
+
+    private fun isBlocked(addresses: String, blocked: Set<String>): Boolean {
+        if (blocked.isEmpty() || addresses.isBlank()) return false
+        val parts = addresses.split(", ").mapNotNull { normalise(it) }
+        // A group chat is only hidden if every participant is blocked.
+        return parts.isNotEmpty() && parts.all { blocked.contains(it) }
+    }
+
+    /** Compare on the last 10 digits so +1 prefixes and formatting don't matter. */
+    private fun normalise(number: String): String? {
+        val digits = number.filter { it.isDigit() }
+        if (digits.isEmpty()) return null
+        return if (digits.length > 10) digits.takeLast(10) else digits
     }
 
     /** recipient_ids is a space-separated list into the canonical address table. */

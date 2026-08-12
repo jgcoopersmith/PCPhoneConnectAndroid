@@ -281,18 +281,53 @@ class ControlAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Trigger the field's IME action (Search / Send / Go). ACTION_IME_ENTER is the
-     * clean route but plenty of fields refuse it, and the result was that Enter on
-     * the PC did nothing at all — so fall back to a newline, which submits
-     * single-line fields and inserts a break in multiline ones.
+     * Submit whatever was typed. Messaging apps are the awkward case: their Enter
+     * key inserts a newline and sending is a separate button, so an IME action
+     * never sends an SMS. Look for that button first, then fall back to the
+     * field's IME action (Search / Go in browsers), then to a plain newline.
      */
     fun imeEnter() {
         val node = focusedEditable() ?: return
+        if (clickSendButton()) return
+
         val submitted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
             runCatching {
                 node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
             }.getOrDefault(false)
         if (!submitted) typeText("\n")
+    }
+
+    /**
+     * Find and press an app's send control. Matched on the accessibility label
+     * rather than a resource id so it works across Messages, chat apps and the
+     * like. Bounded so a deep hierarchy can't stall the control thread.
+     */
+    private fun clickSendButton(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+        var visited = 0
+
+        while (queue.isNotEmpty() && visited < MAX_SEND_SCAN) {
+            val (node, depth) = queue.removeFirst()
+            visited++
+            if (depth > MAX_SEND_DEPTH) continue
+
+            val label = (node.contentDescription ?: node.text)?.toString()?.trim().orEmpty()
+            if (label.isNotEmpty() && SEND_LABELS.any { label.equals(it, ignoreCase = true) }) {
+                // The label often sits on a non-clickable child; walk up for the target.
+                var target: AccessibilityNodeInfo? = node
+                var hops = 0
+                while (target != null && !target.isClickable && hops++ < 3) target = target.parent
+                if (target != null && target.isClickable && target.isEnabled) {
+                    if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+                }
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it to depth + 1) }
+            }
+        }
+        return false
     }
 
     /** key is one of: back, home, recents, notifications, power. */
@@ -312,6 +347,14 @@ class ControlAccessibilityService : AccessibilityService() {
     companion object {
         // Initial touch-down dwell before the first move arrives.
         private const val DOWN_SEGMENT_MS = 12L
+
+        // Labels apps put on their send control. Matched whole, not as a substring,
+        // so "Send feedback" or "Resend" can't be mistaken for it.
+        private val SEND_LABELS = listOf(
+            "Send", "Send message", "Send SMS", "Send text", "Send RCS message"
+        )
+        private const val MAX_SEND_SCAN = 400
+        private const val MAX_SEND_DEPTH = 25
 
         private const val SYSTEM_UI = "com.android.systemui"
         // Confirm button wording differs by Android version / OEM skin.

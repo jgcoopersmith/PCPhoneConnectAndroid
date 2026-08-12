@@ -64,6 +64,8 @@ public partial class MainWindow : Window
         _client.TransferProgress += OnTransferProgress;
         _client.TransferDone += OnTransferDone;
         _client.TransferError += OnTransferError;
+        _client.MessageReceived += OnMessageReceived;
+        _client.ReplyResult += OnReplyResult;
         Closed += (_, _) => _client.Dispose();
         PreviewKeyDown += OnKeyDown;
         Loaded += OnLoaded;
@@ -260,6 +262,11 @@ public partial class MainWindow : Window
                    "switch it off.");
         }
 
+        MessagesStatus.Text = h.MessagesEnabled
+            ? "Messages arrive here as they do on the phone."
+            : "Message access is off — tap \"Allow messages\" in the phone app.";
+        if (h.MessagesEnabled) _client.RequestMessages();
+
         if (h.StorageRoot.Length > 0) _storageRoot = h.StorageRoot;
         if (RemoteDirBox.Text.Trim().Length == 0) RemoteDirBox.Text = _storageRoot;
         if (!h.FileAccess)
@@ -321,6 +328,8 @@ public partial class MainWindow : Window
         PhoneFiles.Items.Clear();
         _phonePath = "";
         _phoneParent = null;
+        // Message keys belong to the old connection; replying with them would fail.
+        MessageList.Items.Clear();
         ClearTypeBoxLocal();
         Status(status);
     }
@@ -659,6 +668,8 @@ public partial class MainWindow : Window
             StatusBar.Visibility = Visibility.Collapsed;
             FilesTab.Visibility = Visibility.Collapsed;
             FilePanel.Visibility = Visibility.Collapsed;
+            MessagesTab.Visibility = Visibility.Collapsed;
+            MessagesPanel.Visibility = Visibility.Collapsed;
             // A little padding so the kept typing bar isn't flush to the corner.
             ContentGrid.Margin = new Thickness(6, 6, 6, 4);
 
@@ -674,6 +685,7 @@ public partial class MainWindow : Window
             NavBar.Visibility = Visibility.Visible;
             StatusBar.Visibility = Visibility.Visible;
             FilesTab.Visibility = Visibility.Visible;
+            MessagesTab.Visibility = Visibility.Visible;
             ContentGrid.Margin = new Thickness(16);
 
             MinWidth = 360;
@@ -851,6 +863,102 @@ public partial class MainWindow : Window
             });
         }
         catch { /* best-effort */ }
+    }
+
+    // ---------------- Messages panel ----------------
+
+    /// <summary>
+    /// Messages arrive as data rather than pixels, because the system blanks
+    /// Google Messages during any screen capture and that cannot be disabled
+    /// without root. Replies go back out through the notification's own reply
+    /// action, so they are sent by Messages itself and RCS still works.
+    /// </summary>
+    private void OnToggleMessages(object sender, RoutedEventArgs e)
+    {
+        bool opening = MessagesPanel.Visibility != Visibility.Visible;
+        MessagesPanel.Visibility = opening ? Visibility.Visible : Visibility.Collapsed;
+        MessagesTab.Visibility = opening ? Visibility.Collapsed : Visibility.Visible;
+        if (opening)
+        {
+            FilePanel.Visibility = Visibility.Collapsed;   // one panel at a time
+            FilesTab.Visibility = Visibility.Visible;
+            if (_client.IsConnected) _client.RequestMessages();
+        }
+    }
+
+    private void OnRefreshMessages(object sender, RoutedEventArgs e)
+    {
+        if (!_client.IsConnected) { MessagesStatus.Text = "Connect to the phone first."; return; }
+        _client.RequestMessages();
+        MessagesStatus.Text = "Fetching conversations on the phone…";
+    }
+
+    private void OnMessageReceived(PhoneMessage m) => Dispatcher.Invoke(() =>
+    {
+        // One row per conversation: a newer message replaces the older entry.
+        for (int i = 0; i < MessageList.Items.Count; i++)
+        {
+            if (MessageList.Items[i] is MessageRow existing && existing.Message.Key == m.Key)
+            {
+                MessageList.Items.RemoveAt(i);
+                break;
+            }
+        }
+        MessageList.Items.Insert(0, new MessageRow(m));
+        while (MessageList.Items.Count > 50) MessageList.Items.RemoveAt(MessageList.Items.Count - 1);
+
+        if (MessagesPanel.Visibility != Visibility.Visible)
+        {
+            MessagesStatus.Text = $"{MessageList.Items.Count} conversations.";
+        }
+    });
+
+    private void OnReplyResult(string key, bool sent) => Dispatcher.Invoke(() =>
+    {
+        MessagesStatus.Text = sent
+            ? "Reply sent."
+            : "Reply failed — the notification may have been dismissed on the phone.";
+        if (sent) ReplyBox.Clear();
+    });
+
+    private void OnReplyKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        OnSendReply(sender, e);
+        e.Handled = true;
+    }
+
+    private void OnSendReply(object sender, RoutedEventArgs e)
+    {
+        if (!_client.IsConnected) { MessagesStatus.Text = "Connect to the phone first."; return; }
+        if (MessageList.SelectedItem is not MessageRow row)
+        {
+            MessagesStatus.Text = "Select a conversation to reply to.";
+            return;
+        }
+        if (!row.Message.CanReply)
+        {
+            MessagesStatus.Text = $"{row.Message.Sender} can't be replied to from a notification.";
+            return;
+        }
+        var text = ReplyBox.Text.Trim();
+        if (text.Length == 0) return;
+        MessagesStatus.Text = $"Replying to {row.Message.Sender}…";
+        _client.SendReply(row.Message.Key, text);
+    }
+
+    /// <summary>One conversation as shown in the list.</summary>
+    private sealed record MessageRow(PhoneMessage Message)
+    {
+        public override string ToString()
+        {
+            var who = string.IsNullOrWhiteSpace(Message.Sender) ? Message.App : Message.Sender;
+            var when = Message.PostedAtMs > 0
+                ? DateTimeOffset.FromUnixTimeMilliseconds(Message.PostedAtMs).LocalDateTime.ToString("HH:mm")
+                : "";
+            var flag = Message.CanReply ? "" : "  (no reply)";
+            return $"{who}  ·  {when}{flag}\n{Message.Text}";
+        }
     }
 
     // ---------------- File transfer panel ----------------

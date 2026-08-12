@@ -71,6 +71,13 @@ class StreamService : Service() {
     @Volatile private var clientSocket: Socket? = null
     private var captureThread: android.os.HandlerThread? = null
 
+    // Framed writer for the connected PC, so control handlers can reply.
+    @Volatile private var sender: ((Int, ByteArray) -> Unit)? = null
+
+    private fun sendFramedSafe(type: Int, payload: ByteArray) {
+        try { sender?.invoke(type, payload) } catch (_: Throwable) { }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -271,6 +278,16 @@ class StreamService : Service() {
         val files = FileTransfer(::sendFramed)
         fileTransfer = files
         clientSocket = socket
+        sender = ::sendFramed
+
+        // Push message notifications to the PC for as long as this client is
+        // connected. Mirroring cannot show Messages at all (the system blanks it
+        // during capture), so messages travel as data instead of pixels.
+        MessageNotificationService.listener = object : MessageNotificationService.Listener {
+            override fun onMessage(message: JSONObject) {
+                sendFramed(TYPE_MESSAGE, message.toString().toByteArray(Charsets.UTF_8))
+            }
+        }
 
         // Reader thread for control messages.
         val reader = Thread({ controlLoop(input, files) }, "pc-control")
@@ -292,6 +309,7 @@ class StreamService : Service() {
                 // Whether input injection is actually available. Without this the
                 // PC mirrors happily while every tap is silently discarded.
                 .put("control", ControlAccessibilityService.isEnabled)
+                .put("messages", MessageNotificationService.isEnabled)
                 .toString()
                 .toByteArray(Charsets.UTF_8)
             sendFramed(TYPE_HEADER, header)
@@ -315,6 +333,8 @@ class StreamService : Service() {
             files.shutdown()
             if (fileTransfer === files) fileTransfer = null
             if (clientSocket === socket) clientSocket = null
+            sender = null
+            MessageNotificationService.listener = null
             // The PC may have dropped mid-drag; release any held finger.
             try { ControlAccessibilityService.instance?.cancelDrag() } catch (_: Throwable) {}
             try { socket.close() } catch (_: Throwable) {}
@@ -358,6 +378,23 @@ class StreamService : Service() {
         try {
             val o = JSONObject(json)
             when (o.optString("t")) {
+                "msgs" -> {
+                    // PC asked for whatever conversations are on screen now.
+                    MessageNotificationService.instance?.currentMessages()?.forEach { m ->
+                        sendFramedSafe(TYPE_MESSAGE, m.toString().toByteArray(Charsets.UTF_8))
+                    }
+                    return
+                }
+                "reply" -> {
+                    val ok = MessageNotificationService.instance
+                        ?.reply(o.optString("key"), o.optString("text")) ?: false
+                    sendFramedSafe(
+                        TYPE_MESSAGE,
+                        JSONObject().put("r", "reply").put("key", o.optString("key"))
+                            .put("ok", ok).toString().toByteArray(Charsets.UTF_8)
+                    )
+                    return
+                }
                 "ls" -> { files.list(o.optString("path").ifBlank { null }); return }
                 "tree" -> { files.tree(o.optString("path")); return }
                 "get" -> { files.get(o.optString("path")); return }
@@ -593,6 +630,8 @@ class StreamService : Service() {
 
         private const val TYPE_HEADER = 0
         private const val TYPE_FRAME = 1
+        // 2 and 3 belong to FileTransfer (response / file chunk).
+        private const val TYPE_MESSAGE = 4
         // Inbound (PC -> phone) message types.
         private const val IN_JSON = 0
         private const val IN_FILEDATA = 1

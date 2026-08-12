@@ -245,6 +245,87 @@
         </Grid>
    </Grid>
 
+   <!-- Side tab: opens the messages panel -->
+   <Button x:Name="MessagesTab" HorizontalAlignment="Right" VerticalAlignment="Center"
+           Margin="0,0,0,150" Width="30" Height="120" Padding="0" Click="OnToggleMessages"
+           ToolTip="Messages">
+       <TextBlock Text="MSGS" FontSize="12" FontWeight="SemiBold" Foreground="#E6ECF5">
+           <TextBlock.LayoutTransform>
+               <RotateTransform Angle="90" />
+           </TextBlock.LayoutTransform>
+       </TextBlock>
+   </Button>
+
+   <!-- Messages panel -->
+   <Border x:Name="MessagesPanel" Visibility="Collapsed"
+           HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="400"
+           Background="#111C31" BorderBrush="#2B3B5E" BorderThickness="1,0,0,0">
+       <Grid Margin="14">
+           <Grid.RowDefinitions>
+               <RowDefinition Height="Auto" />
+               <RowDefinition Height="*" />
+               <RowDefinition Height="Auto" />
+               <RowDefinition Height="Auto" />
+           </Grid.RowDefinitions>
+
+           <Grid Grid.Row="0" Margin="0,0,0,10">
+               <TextBlock Text="Messages" Foreground="#E6ECF5"
+                          FontSize="17" FontWeight="Bold" VerticalAlignment="Center" />
+               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                   <Button Content="⟳" Width="30" Padding="0" Click="OnRefreshMessages"
+                           ToolTip="Fetch conversations currently on the phone" />
+                   <Button Content="✕" Width="30" Padding="0" Click="OnToggleMessages" />
+               </StackPanel>
+           </Grid>
+
+           <Border Grid.Row="1" Background="#0B1424" BorderBrush="#2B3B5E" BorderThickness="1"
+                   CornerRadius="6">
+               <ListBox x:Name="MessageList" Background="Transparent" BorderThickness="0"
+                        Foreground="#E6ECF5" HorizontalContentAlignment="Stretch">
+                   <ListBox.ItemContainerStyle>
+                       <Style TargetType="ListBoxItem">
+                           <Setter Property="Padding" Value="8,6" />
+                           <Setter Property="Foreground" Value="#E6ECF5" />
+                           <Setter Property="Template">
+                               <Setter.Value>
+                                   <ControlTemplate TargetType="ListBoxItem">
+                                       <Border x:Name="mb" Background="Transparent" CornerRadius="4"
+                                               Padding="{TemplateBinding Padding}">
+                                           <ContentPresenter />
+                                       </Border>
+                                       <ControlTemplate.Triggers>
+                                           <Trigger Property="IsMouseOver" Value="True">
+                                               <Setter TargetName="mb" Property="Background" Value="#22314F" />
+                                           </Trigger>
+                                           <Trigger Property="IsSelected" Value="True">
+                                               <Setter TargetName="mb" Property="Background" Value="#2B3B5E" />
+                                           </Trigger>
+                                       </ControlTemplate.Triggers>
+                                   </ControlTemplate>
+                               </Setter.Value>
+                           </Setter>
+                       </Style>
+                   </ListBox.ItemContainerStyle>
+               </ListBox>
+           </Border>
+
+           <Grid Grid.Row="2" Margin="0,10,0,0">
+               <Grid.ColumnDefinitions>
+                   <ColumnDefinition Width="*" />
+                   <ColumnDefinition Width="Auto" />
+               </Grid.ColumnDefinitions>
+               <TextBox x:Name="ReplyBox" Grid.Column="0" Margin="0,0,6,0"
+                        KeyDown="OnReplyKeyDown"
+                        ToolTip="Select a conversation, type a reply, press Enter" />
+               <Button Grid.Column="1" Content="Send" Click="OnSendReply" Margin="0" />
+           </Grid>
+
+           <TextBlock x:Name="MessagesStatus" Grid.Row="3" Margin="2,10,0,0" FontSize="11"
+                      TextWrapping="Wrap"
+                      Text="Messages arrive here as they do on the phone." />
+       </Grid>
+   </Border>
+
    <!-- Side tab: opens the file transfer panel -->
    <Button x:Name="FilesTab" HorizontalAlignment="Right" VerticalAlignment="Center"
            Width="30" Height="120" Margin="0" Padding="0" Click="OnToggleFiles"

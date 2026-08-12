@@ -95,6 +95,9 @@ public sealed class PhoneClient : IDisposable
                     case 3:
                         HandleFileChunk(payload);
                         break;
+                    case 4:
+                        HandleMessage(Encoding.UTF8.GetString(payload));
+                        break;
                 }
             }
         }
@@ -129,6 +132,49 @@ public sealed class PhoneClient : IDisposable
         var ex = new IOException(reason);
         Interlocked.Exchange(ref _treeTcs, null)?.TrySetException(ex);
         Interlocked.Exchange(ref _getTcs, null)?.TrySetException(ex);
+    }
+
+    // ---- Messages (notification-backed) ----
+
+    public event Action<PhoneMessage>? MessageReceived;
+    public event Action<string, bool>? ReplyResult;   // key, sent
+
+    /// <summary>Ask the phone for the conversations currently on screen.</summary>
+    public void RequestMessages() => Send("{\"t\":\"msgs\"}");
+
+    /// <summary>Reply to a message through the app that posted its notification.</summary>
+    public void SendReply(string key, string text) =>
+        Send("{\"t\":\"reply\",\"key\":" + JsonSerializer.Serialize(key) +
+             ",\"text\":" + JsonSerializer.Serialize(text) + "}");
+
+    private void HandleMessage(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // Reply acknowledgement rather than an incoming message.
+            if (root.TryGetProperty("r", out var kind) && kind.GetString() == "reply")
+            {
+                ReplyResult?.Invoke(
+                    root.TryGetProperty("key", out var rk) ? rk.GetString() ?? "" : "",
+                    root.TryGetProperty("ok", out var ok) && ok.GetBoolean());
+                return;
+            }
+
+            MessageReceived?.Invoke(new PhoneMessage(
+                root.TryGetProperty("key", out var k) ? k.GetString() ?? "" : "",
+                root.TryGetProperty("app", out var a) ? a.GetString() ?? "" : "",
+                root.TryGetProperty("sender", out var s) ? s.GetString() ?? "" : "",
+                root.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "",
+                root.TryGetProperty("time", out var ts) ? ts.GetInt64() : 0,
+                root.TryGetProperty("canReply", out var cr) && cr.GetBoolean()));
+        }
+        catch
+        {
+            // malformed — ignore
+        }
     }
 
     // ---- Inbound file responses ----
@@ -342,7 +388,8 @@ public sealed class PhoneClient : IDisposable
                 root.TryGetProperty("root", out var rt) ? rt.GetString() ?? "" : "",
                 // Older builds don't report this; assume control works so we don't
                 // warn about a phone that is actually fine.
-                !root.TryGetProperty("control", out var ct) || ct.ValueKind != JsonValueKind.False);
+                !root.TryGetProperty("control", out var ct) || ct.ValueKind != JsonValueKind.False,
+                root.TryGetProperty("messages", out var ms) && ms.ValueKind == JsonValueKind.True);
         }
         catch
         {
@@ -520,7 +567,12 @@ public sealed class PhoneClient : IDisposable
 public record DeviceHeader(
     string Name, int Width, int Height, int StreamWidth, int StreamHeight,
     string Model = "", string AndroidVersion = "",
-    bool FileAccess = false, string StorageRoot = "", bool ControlEnabled = true);
+    bool FileAccess = false, string StorageRoot = "", bool ControlEnabled = true,
+    bool MessagesEnabled = false);
+
+/// <summary>An incoming message, sourced from its notification on the phone.</summary>
+public record PhoneMessage(
+    string Key, string App, string Sender, string Text, long PostedAtMs, bool CanReply);
 
 /// <summary>One entry in a phone folder listing.</summary>
 public record PhoneEntry(string Name, bool IsDirectory, long Size);

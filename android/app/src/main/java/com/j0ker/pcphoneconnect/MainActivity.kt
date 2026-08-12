@@ -74,6 +74,16 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
 
         binding.enableFilesButton.setOnClickListener { requestAllFilesAccess() }
 
+        binding.enableMessagesButton.setOnClickListener {
+            if (enableNotificationAccess()) {
+                toast("Message access enabled")
+                binding.root.postDelayed({ if (!isFinishing) refreshUi(StreamService.isRunning) }, 1200)
+            } else {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                toast("Turn on \"PC Phone Connect\"")
+            }
+        }
+
         binding.startButton.setOnClickListener { requestStart() }
         binding.stopButton.setOnClickListener {
             startService(Intent(this, StreamService::class.java).apply {
@@ -193,6 +203,44 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         toast("Turn on \"Allow access to manage all files\"")
     }
 
+    /**
+     * Notification access is a secure setting, so with WRITE_SECURE_SETTINGS the
+     * app can switch itself on exactly as it does for the accessibility service.
+     * Returns false when the grant is missing, so the caller can fall back to the
+     * settings screen.
+     */
+    private fun enableNotificationAccess(): Boolean {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_SECURE_SETTINGS)
+            != PackageManager.PERMISSION_GRANTED
+        ) return false
+        val component = "$packageName/${MessageNotificationService::class.java.name}"
+        return try {
+            val current = Settings.Secure.getString(
+                contentResolver, "enabled_notification_listeners"
+            ).orEmpty()
+            val listeners = current.split(':').filter { it.isNotBlank() }.toMutableList()
+            if (listeners.none { it.equals(component, ignoreCase = true) }) {
+                listeners += component
+                Settings.Secure.putString(
+                    contentResolver, "enabled_notification_listeners", listeners.joinToString(":")
+                )
+            }
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun hasNotificationAccess(): Boolean = try {
+        val component = "$packageName/${MessageNotificationService::class.java.name}"
+        Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+            .orEmpty()
+            .split(':')
+            .any { it.equals(component, ignoreCase = true) }
+    } catch (_: Throwable) {
+        false
+    }
+
     private fun hasAllFilesAccess(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
             android.os.Environment.isExternalStorageManager()
@@ -215,6 +263,10 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         val filesOn = hasAllFilesAccess()
         binding.fileAccessStatus.text = "File transfer access: " + if (filesOn) "ON" else "OFF"
         binding.enableFilesButton.isEnabled = !filesOn
+
+        val msgsOn = hasNotificationAccess()
+        binding.messagesStatus.text = "Message access: " + if (msgsOn) "ON" else "OFF"
+        binding.enableMessagesButton.isEnabled = !msgsOn
         if (running) {
             val port = currentPort()
             val ips = localIpv4Addresses()

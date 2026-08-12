@@ -50,6 +50,19 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <!-- Reads message notifications and sends replies back through the app
+             that posted them. Needed because screen capture of Messages is
+             blanked by the system and cannot be re-enabled without root. -->
+        <service
+            android:name=".MessageNotificationService"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".ControlAccessibilityService"
             android:exported="false"

@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -182,7 +182,7 @@ public partial class MainWindow : Window
         var host = IpBox.Text.Trim();
         if (!int.TryParse(PortBox.Text.Trim(), out var port) || port is < 1 or > 65535)
         {
-            Status("Enter a valid port (1â€“65535).");
+            Status("Enter a valid port (1–65535).");
             return;
         }
         if (host.Length == 0)
@@ -191,14 +191,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        Status($"Connecting to {host}:{port}â€¦");
+        Status($"Connecting to {host}:{port}…");
         HistoryPopup.IsOpen = false;
         ConnectButton.IsEnabled = false;
         try
         {
             await Task.Run(() => _client.Connect(host, port)); // off the UI thread
             ConnectButton.Content = "Disconnect";
-            Status($"Connected to {host}:{port}. Waiting for screenâ€¦");
+            Status($"Connected to {host}:{port}. Waiting for screen…");
             RememberConnection(host, port);
         }
         catch (Exception ex)
@@ -241,12 +241,12 @@ public partial class MainWindow : Window
         // Show the detected device: friendly name, with the bare model number and
         // Android version alongside it when the phone reported them.
         var detail = h.Model.Length > 0 && !h.Name.Contains(h.Model, StringComparison.OrdinalIgnoreCase)
-            ? $"{h.Name} Â· {h.Model}"
+            ? $"{h.Name} · {h.Model}"
             : h.Name;
-        if (h.AndroidVersion.Length > 0) detail += $" Â· Android {h.AndroidVersion}";
-        Title = $"PC Phone Connect â€” {h.Name}";
+        if (h.AndroidVersion.Length > 0) detail += $" · Android {h.AndroidVersion}";
+        Title = $"PC Phone Connect — {h.Name}";
         TitleText.Text = Title;
-        Status($"Mirroring {detail} ({h.Width}Ã—{h.Height}). Click to tap, drag to swipe, right-click = Back.");
+        Status($"Mirroring {detail} ({h.Width}×{h.Height}). Click to tap, drag to swipe, right-click = Back.");
 
         // Start the view on the phone's main home page. Only mark it done once
         // control actually works, so a connection made while the accessibility
@@ -259,25 +259,25 @@ public partial class MainWindow : Window
 
         if (!h.ControlEnabled)
         {
-            Status("Mirroring only â€” remote control is OFF. On the phone, tap " +
+            Status("Mirroring only — remote control is OFF. On the phone, tap " +
                    "\"Enable control (Accessibility settings)\". An app update can " +
                    "switch it off.");
         }
 
         MessagesStatus.Text = h.MessagesEnabled
             ? "Messages arrive here as they do on the phone."
-            : "Message access is off â€” tap \"Allow messages\" in the phone app.";
+            : "Message access is off — tap \"Allow messages\" in the phone app.";
         if (h.MessagesEnabled) _client.RequestMessages();
         SmsHistoryButton.IsEnabled = h.SmsHistory;
         SmsHistoryButton.ToolTip = h.SmsHistory
             ? "Browse SMS conversations on the phone"
-            : "SMS history is off â€” tap \"Allow SMS history\" in the phone app.";
+            : "SMS history is off — tap \"Allow SMS history\" in the phone app.";
 
         if (h.StorageRoot.Length > 0) _storageRoot = h.StorageRoot;
         if (RemoteDirBox.Text.Trim().Length == 0) RemoteDirBox.Text = _storageRoot;
         if (!h.FileAccess)
         {
-            TransferStatus.Text = "File transfer needs \"All files access\" â€” " +
+            TransferStatus.Text = "File transfer needs \"All files access\" — " +
                                   "tap \"Allow file transfer\" in the phone app.";
         }
         else if (FilePanel.Visibility == Visibility.Visible)
@@ -431,7 +431,7 @@ public partial class MainWindow : Window
         _pressTimer.Stop();
 
         // Release capture unconditionally. Returning early while the image still
-        // holds capture swallows every later mouse event in the window â€” the whole
+        // holds capture swallows every later mouse event in the window — the whole
         // app looks frozen until it is restarted.
         _ignoreLostCapture = true;
         ScreenImage.ReleaseMouseCapture();
@@ -444,12 +444,12 @@ public partial class MainWindow : Window
         // the press point, cancelling the drag. Clamp to the edge instead.
         var end = ToNormalized(upPoint) ?? ClampToImage(upPoint) ?? start.Value;
 
-        // A live drag was in progress â€” release the continuous touch.
+        // A live drag was in progress — release the continuous touch.
         if (_dragging)
         {
             _dragging = false;
 
-            // A pause before letting go means the user is placing, not flinging â€”
+            // A pause before letting go means the user is placing, not flinging —
             // decay the tracked velocity by how long the pointer sat still, or a
             // stale reading would fling a deliberately positioned page.
             double idleMs = _segTimer.Elapsed.TotalMilliseconds;
@@ -488,14 +488,14 @@ public partial class MainWindow : Window
 
         if (moved < TapMovePixels)
         {
-            // A tap selects/dismisses â€” that leaves the Recents carousel.
+            // A tap selects/dismisses — that leaves the Recents carousel.
             _recentsMode = false;
             if (ms >= 500) _client.LongPress(start.Value.x, start.Value.y, (int)Math.Min(ms, 2000));
             else _client.Tap(start.Value.x, start.Value.y);
         }
         else
         {
-            // Fast flick that never triggered a move event â€” send it as one swipe.
+            // Fast flick that never triggered a move event — send it as one swipe.
             int dur = (int)Math.Clamp(ms, 50, 900);
             _client.Swipe(start.Value.x, start.Value.y, end.x, end.y, dur);
         }
@@ -529,7 +529,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Mouse wheel â†’ swipe, so scrolling works in browsers, Reddit, feeds, etc.
+    /// Mouse wheel → swipe, so scrolling works in browsers, Reddit, feeds, etc.
     /// Normally vertical: wheel up scrolls the page up (finger swipes down), wheel
     /// down scrolls down (finger swipes up). In Recents mode the carousel is
     /// horizontal, so the wheel swipes left/right instead. The swipe runs at the
@@ -543,7 +543,7 @@ public partial class MainWindow : Window
 
         // Spinning the wheel fast delivers several notches faster than a ~280ms
         // swipe can be injected, and the phone drops gestures that arrive while
-        // one is running â€” so scroll distance scales with the accumulated delta
+        // one is running — so scroll distance scales with the accumulated delta
         // instead of silently losing the extra notches.
         int notches = Math.Clamp(Math.Abs(e.Delta) / 120, 1, 3);
 
@@ -551,7 +551,7 @@ public partial class MainWindow : Window
         {
             const double half = RecentsWheelDistance / 2;
             double cy = Math.Clamp(n?.y ?? 0.5, 0.05, 0.95);
-            // Wheel down â†’ move forward through recents â†’ swipe left; wheel up â†’ right.
+            // Wheel down → move forward through recents → swipe left; wheel up → right.
             double x1 = e.Delta < 0 ? 0.5 + half : 0.5 - half;
             double x2 = e.Delta < 0 ? 0.5 - half : 0.5 + half;
             _client.Swipe(x1, cy, x2, cy, RecentsWheelMs);
@@ -560,7 +560,7 @@ public partial class MainWindow : Window
         {
             double half = Math.Min(WheelDistance * notches, 0.8) / 2;
             double cx = Math.Clamp(n?.x ?? 0.5, 0.05, 0.95);
-            // Wheel down â†’ scroll page down â†’ swipe up; wheel up â†’ swipe down.
+            // Wheel down → scroll page down → swipe up; wheel up → swipe down.
             double y1 = e.Delta < 0 ? 0.5 + half : 0.5 - half;
             double y2 = e.Delta < 0 ? 0.5 - half : 0.5 + half;
             _client.Swipe(cx, y1, cx, y2, WheelMs);
@@ -572,7 +572,7 @@ public partial class MainWindow : Window
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
         if (!_client.IsConnected) return;
-        // Don't hijack keys while a text field has focus â€” let it edit normally.
+        // Don't hijack keys while a text field has focus — let it edit normally.
         if (Keyboard.FocusedElement is TextBox) return;
         switch (e.Key)
         {
@@ -636,7 +636,7 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Double-click toggles the compact widget. Clicks that land on the mirror or
-    /// on a control are left alone â€” double-tap is a real gesture on the phone and
+    /// on a control are left alone — double-tap is a real gesture on the phone and
     /// the text box needs its own double-click to select a word.
     /// </summary>
     private void OnWindowDoubleClick(object sender, MouseButtonEventArgs e)
@@ -666,7 +666,7 @@ public partial class MainWindow : Window
         {
             _normalBounds = new Rect(Left, Top, Width, Height);
 
-            // Strip everything except the mirror â€” but keep the typing bar, since
+            // Strip everything except the mirror — but keep the typing bar, since
             // typing to the phone is the main thing you still want from a widget.
             TitleBar.Visibility = Visibility.Collapsed;
             ConnectionBar.Visibility = Visibility.Collapsed;
@@ -896,7 +896,7 @@ public partial class MainWindow : Window
     {
         if (!_client.IsConnected) { MessagesStatus.Text = "Connect to the phone first."; return; }
         _client.RequestMessages();
-        MessagesStatus.Text = "Fetching conversations on the phoneâ€¦";
+        MessagesStatus.Text = "Fetching conversations on the phone…";
     }
 
     private void OnMessageReceived(PhoneMessage m) => Dispatcher.Invoke(() =>
@@ -904,7 +904,7 @@ public partial class MainWindow : Window
         // Don't disturb the history view; note it instead.
         if (_historyMode)
         {
-            MessagesStatus.Text = $"New message from {m.Sender} â€” press Live to see it.";
+            MessagesStatus.Text = $"New message from {m.Sender} — press Live to see it.";
             return;
         }
 
@@ -930,7 +930,7 @@ public partial class MainWindow : Window
     {
         MessagesStatus.Text = sent
             ? "Reply sent."
-            : "Reply failed â€” the notification may have been dismissed on the phone.";
+            : "Reply failed — the notification may have been dismissed on the phone.";
         if (sent) ReplyBox.Clear();
     });
 
@@ -956,7 +956,7 @@ public partial class MainWindow : Window
         }
         var text = ReplyBox.Text.Trim();
         if (text.Length == 0) return;
-        MessagesStatus.Text = $"Replying to {row.Message.Sender}â€¦";
+        MessagesStatus.Text = $"Replying to {row.Message.Sender}…";
         _client.SendReply(row.Message.Key, text);
     }
 
@@ -991,7 +991,7 @@ public partial class MainWindow : Window
         _openThreadId = 0;
         SmsHistoryButton.Content = "Live";
         MessageList.Items.Clear();
-        MessagesStatus.Text = "Loading conversationsâ€¦";
+        MessagesStatus.Text = "Loading conversations…";
         _client.RequestThreads();
     }
 
@@ -1012,7 +1012,7 @@ public partial class MainWindow : Window
         foreach (var t in threads) MessageList.Items.Add(new ThreadRow(t));
         MessagesStatus.Text = threads.Count == 0
             ? "No conversations found."
-            : $"{threads.Count} conversations â€” double-click to open.";
+            : $"{threads.Count} conversations — double-click to open.";
     });
 
     private void OnThreadLoaded(long id, List<SmsMessage> messages) => Dispatcher.Invoke(() =>
@@ -1020,7 +1020,7 @@ public partial class MainWindow : Window
         _openThreadId = id;
         MessageList.Items.Clear();
         foreach (var m in messages) MessageList.Items.Add(new SmsRow(m));
-        MessagesStatus.Text = $"{messages.Count} messages â€” History goes back to the list. " +
+        MessagesStatus.Text = $"{messages.Count} messages — History goes back to the list. " +
                               "Replies still go through a live notification.";
         if (MessageList.Items.Count > 0) MessageList.ScrollIntoView(MessageList.Items[^1]);
     });
@@ -1029,7 +1029,7 @@ public partial class MainWindow : Window
     {
         if (MessageList.SelectedItem is ThreadRow row)
         {
-            MessagesStatus.Text = $"Loading {row.Thread.Name}â€¦";
+            MessagesStatus.Text = $"Loading {row.Thread.Name}…";
             _client.RequestThread(row.Thread.Id);
         }
     }
@@ -1042,7 +1042,7 @@ public partial class MainWindow : Window
             var who = string.IsNullOrWhiteSpace(Thread.Name) ? Thread.Address : Thread.Name;
             var when = Stamp(Thread.DateMs);
             var prefix = Thread.Outgoing ? "You: " : "";
-            return $"{who}  Â·  {when}\n{prefix}{Thread.Snippet}";
+            return $"{who}  ·  {when}\n{prefix}{Thread.Snippet}";
         }
     }
 
@@ -1050,7 +1050,7 @@ public partial class MainWindow : Window
     private sealed record SmsRow(SmsMessage Message)
     {
         public override string ToString() =>
-            $"{(Message.Outgoing ? "You" : "Them")}  Â·  {Stamp(Message.DateMs)}\n{Message.Text}";
+            $"{(Message.Outgoing ? "You" : "Them")}  ·  {Stamp(Message.DateMs)}\n{Message.Text}";
     }
 
     private static string Stamp(long ms)
@@ -1070,7 +1070,7 @@ public partial class MainWindow : Window
                 ? DateTimeOffset.FromUnixTimeMilliseconds(Message.PostedAtMs).LocalDateTime.ToString("HH:mm")
                 : "";
             var flag = Message.CanReply ? "" : "  (no reply)";
-            return $"{who}  Â·  {when}{flag}\n{Message.Text}";
+            return $"{who}  ·  {when}{flag}\n{Message.Text}";
         }
     }
 
@@ -1094,7 +1094,7 @@ public partial class MainWindow : Window
     private void BrowsePhone(string path)
     {
         if (!_client.IsConnected) { TransferStatus.Text = "Connect to the phone first."; return; }
-        TransferStatus.Text = "Loadingâ€¦";
+        TransferStatus.Text = "Loading…";
         _client.ListFolder(path);
     }
 
@@ -1154,7 +1154,7 @@ public partial class MainWindow : Window
         if (!row.Entry.IsDirectory)
         {
             _client.DownloadFolder = local;
-            TransferStatus.Text = $"Downloading {row.Entry.Name}â€¦";
+            TransferStatus.Text = $"Downloading {row.Entry.Name}…";
             _client.DownloadFile(phonePath);
             return;
         }
@@ -1163,12 +1163,12 @@ public partial class MainWindow : Window
         SetTransferButtons(false);
         try
         {
-            TransferStatus.Text = $"Scanning {row.Entry.Name}â€¦";
+            TransferStatus.Text = $"Scanning {row.Entry.Name}…";
             var tree = await _client.GetTreeAsync(phonePath);
             if (tree.Files.Count == 0)
             {
                 Directory.CreateDirectory(Path.Combine(local, row.Entry.Name));
-                TransferStatus.Text = $"{row.Entry.Name} is empty â€” created the folder.";
+                TransferStatus.Text = $"{row.Entry.Name} is empty — created the folder.";
                 return;
             }
 
@@ -1187,7 +1187,7 @@ public partial class MainWindow : Window
                 var destDir = Path.GetDirectoryName(Path.Combine(destRoot, rel)) ?? destRoot;
                 Directory.CreateDirectory(destDir);
                 TransferStatus.Text =
-                    $"Downloading {row.Entry.Name} â€” {done + 1}/{tree.Files.Count}: {Path.GetFileName(rel)}";
+                    $"Downloading {row.Entry.Name} — {done + 1}/{tree.Files.Count}: {Path.GetFileName(rel)}";
                 await _client.DownloadFileAsync(CombinePhone(phonePath, file.RelativePath), destDir);
                 done++;
             }
@@ -1238,7 +1238,7 @@ public partial class MainWindow : Window
         try
         {
             // Enumerating a deep tree can take seconds; keep it off the UI thread.
-            TransferStatus.Text = $"Scanning {folderName}â€¦";
+            TransferStatus.Text = $"Scanning {folderName}…";
             var files = await Task.Run(
                 () => Directory.GetFiles(sourceRoot, "*", SearchOption.AllDirectories));
             if (files.Length == 0)
@@ -1255,7 +1255,7 @@ public partial class MainWindow : Window
                     ? targetRoot
                     : CombinePhone(targetRoot, relDir.Replace(Path.DirectorySeparatorChar, '/'));
                 var label = Path.GetFileName(file);
-                TransferStatus.Text = $"Uploading {folderName} â€” {done + 1}/{files.Length}: {label}";
+                TransferStatus.Text = $"Uploading {folderName} — {done + 1}/{files.Length}: {label}";
                 await Task.Run(() => _client.UploadFile(file, phoneDir));
                 done++;
             }
@@ -1293,10 +1293,10 @@ public partial class MainWindow : Window
             foreach (var file in files)
             {
                 var name = Path.GetFileName(file);
-                TransferStatus.Text = $"Uploading {name}â€¦";
+                TransferStatus.Text = $"Uploading {name}…";
                 await Task.Run(() => _client.UploadFile(file, target,
                     (done, total) => Dispatcher.BeginInvoke(() =>
-                        TransferStatus.Text = $"Uploading {name} â€” {Percent(done, total)}")));
+                        TransferStatus.Text = $"Uploading {name} — {Percent(done, total)}")));
             }
             TransferStatus.Text = files.Length == 1
                 ? $"Uploaded {Path.GetFileName(files[0])}."
@@ -1314,10 +1314,10 @@ public partial class MainWindow : Window
     }
 
     private static string Percent(long done, long total) =>
-        total <= 0 ? "â€¦" : $"{100.0 * done / total:0}%";
+        total <= 0 ? "…" : $"{100.0 * done / total:0}%";
 
     private void OnTransferProgress(string name, long done, long total) =>
-        Dispatcher.BeginInvoke(() => TransferStatus.Text = $"Downloading {name} â€” {Percent(done, total)}");
+        Dispatcher.BeginInvoke(() => TransferStatus.Text = $"Downloading {name} — {Percent(done, total)}");
 
     private void OnTransferDone(string path) => Dispatcher.Invoke(() =>
     {
@@ -1376,8 +1376,8 @@ public partial class MainWindow : Window
     private sealed record FileRow(PhoneEntry Entry)
     {
         public override string ToString() => Entry.IsDirectory
-            ? $"ðŸ“  {Entry.Name}"
-            : $"ðŸ“„  {Entry.Name}    {Human(Entry.Size)}";
+            ? $"📁  {Entry.Name}"
+            : $"📄  {Entry.Name}    {Human(Entry.Size)}";
 
         private static string Human(long bytes) => bytes switch
         {

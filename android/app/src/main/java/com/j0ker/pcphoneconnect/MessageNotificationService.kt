@@ -43,21 +43,51 @@ class MessageNotificationService : NotificationListenerService() {
         val n = sbn ?: return
         if (!isMessage(n)) return
         active[n.key] = n
-        listener?.onMessage(describe(n))
+        val described = describe(n)
+        remember(n.key, described)
+        listener?.onMessage(described)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        sbn?.let { active.remove(it.key) }
+        val key = sbn?.key ?: return
+        active.remove(key)
+        // Keep the message visible on the PC after it is read or swiped away —
+        // otherwise it vanishes from the list the moment you glance at the phone.
+        // It can no longer be replied to, though, so say so.
+        synchronized(recent) {
+            recent[key]?.put("canReply", false)
+        }
     }
 
-    /** Everything currently on screen that looks like a message. */
-    fun currentMessages(): List<JSONObject> = try {
-        activeNotifications.orEmpty()
-            .filter { isMessage(it) }
-            .onEach { active[it.key] = it }
-            .map { describe(it) }
-    } catch (_: Throwable) {
-        emptyList()
+    /**
+     * Messages seen this session, newest first, whether or not their notification
+     * is still showing. Anything still active is refreshed first so its reply
+     * state is accurate.
+     */
+    fun currentMessages(): List<JSONObject> {
+        try {
+            activeNotifications.orEmpty()
+                .filter { isMessage(it) }
+                .forEach {
+                    active[it.key] = it
+                    remember(it.key, describe(it))
+                }
+        } catch (_: Throwable) {
+            // listener not connected yet; fall through to whatever we remember
+        }
+        return synchronized(recent) {
+            recent.values.sortedByDescending { it.optLong("time") }
+        }
+    }
+
+    private fun remember(key: String, described: JSONObject) {
+        synchronized(recent) {
+            recent.remove(key)          // re-insert so ordering stays by recency
+            recent[key] = described
+            while (recent.size > MAX_REMEMBERED) {
+                recent.remove(recent.keys.first())
+            }
+        }
     }
 
     /**
@@ -152,7 +182,13 @@ class MessageNotificationService : NotificationListenerService() {
         @Volatile
         var listener: Listener? = null
 
-        // Keyed by notification key so a reply can find its action later.
+        // Keyed by notification key so a reply can find its action later. Only
+        // holds notifications still on screen, since a reply needs a live action.
         private val active = ConcurrentHashMap<String, StatusBarNotification>()
+
+        // Messages seen this session, in arrival order, kept after dismissal so
+        // reading a message on the phone doesn't erase it from the PC.
+        private val recent = LinkedHashMap<String, JSONObject>()
+        private const val MAX_REMEMBERED = 50
     }
 }

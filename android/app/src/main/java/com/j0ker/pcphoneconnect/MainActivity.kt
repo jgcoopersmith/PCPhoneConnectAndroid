@@ -30,9 +30,25 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* result ignored */ }
 
     private val smsPermission =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
             refreshUi(StreamService.isRunning)
+            // A permission that was denied twice stops showing a dialog at all,
+            // so the button would look dead. Hand the user to app settings.
+            if (result.values.any { !it } && !shouldShowRequestPermissionRationale(
+                    Manifest.permission.SEND_SMS
+                )
+            ) openAppSettings()
         }
+
+    private fun openAppSettings() {
+        toast("Turn on SMS under Permissions")
+        startActivity(
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.fromParts("package", packageName, null)
+            )
+        )
+    }
 
     private val projectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -90,6 +106,8 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         }
 
         binding.enableSmsButton.setOnClickListener {
+            // Android only shows a permission dialog once per denial, so send the
+            // user to app settings if they've already turned one of these down.
             smsPermission.launch(
                 arrayOf(
                     Manifest.permission.READ_SMS,
@@ -246,6 +264,9 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         }
     }
 
+    private fun granted(permission: String) =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
     private fun hasNotificationAccess(): Boolean = try {
         val component = "$packageName/${MessageNotificationService::class.java.name}"
         Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
@@ -283,10 +304,17 @@ class MainActivity : AppCompatActivity(), StreamService.Listener {
         binding.messagesStatus.text = "Message access: " + if (msgsOn) "ON" else "OFF"
         binding.enableMessagesButton.isEnabled = !msgsOn
 
-        val smsOn = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) ==
-            PackageManager.PERMISSION_GRANTED
-        binding.smsStatus.text = "SMS history: " + if (smsOn) "ON" else "OFF"
-        binding.enableSmsButton.isEnabled = !smsOn
+        // Reading and sending are separate grants, so check both. Gating the
+        // button on reading alone left it greyed out for anyone who already had
+        // history working, with no way left to ask for the sending permission.
+        val readOn = granted(Manifest.permission.READ_SMS)
+        val sendOn = granted(Manifest.permission.SEND_SMS)
+        binding.smsStatus.text = "SMS history: " + when {
+            readOn && sendOn -> "ON"
+            readOn -> "read only"
+            else -> "OFF"
+        }
+        binding.enableSmsButton.isEnabled = !readOn || !sendOn
         if (running) {
             val port = currentPort()
             val ips = localIpv4Addresses()

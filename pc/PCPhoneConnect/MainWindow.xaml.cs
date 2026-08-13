@@ -77,6 +77,7 @@ public partial class MainWindow : Window
         LoadHistory();
         LoadFolders();
         LoadHiddenNumbers();
+        LoadSent();
         HistoryList.ItemsSource = _history;
 
         // Read the version from the assembly so the badge can't drift from the
@@ -979,6 +980,7 @@ public partial class MainWindow : Window
                 return;
             }
             MessagesStatus.Text = $"Sending to {_openThreadName}…";
+            _pendingSend = (_openThreadAddress, text);
             _client.SendSms(_openThreadAddress, text);
             return;
         }
@@ -1003,10 +1005,21 @@ public partial class MainWindow : Window
 
     private void OnSmsSent(bool ok, string message) => Dispatcher.Invoke(() =>
     {
-        MessagesStatus.Text = ok
-            ? $"{message}. It won't appear in the phone's thread — this app isn't the default SMS app."
-            : message;
-        if (ok) ReplyBox.Clear();
+        var pending = _pendingSend;
+        _pendingSend = null;
+        if (!ok) { MessagesStatus.Text = message; return; }
+
+        ReplyBox.Clear();
+        MessagesStatus.Text = message;
+        if (pending is not { } p) return;
+
+        var echo = RecordSent(p.address, p.text);
+        // Show it straight away if that conversation is still on screen.
+        if (_msgView == MessagesView.Thread && ThreadKey(_openThreadAddress) == ThreadKey(p.address))
+        {
+            MessageList.Items.Add(new SmsRow(echo));
+            MessageList.ScrollIntoView(MessageList.Items[^1]);
+        }
     });
 
     // ---- SMS history ----
@@ -1095,7 +1108,7 @@ public partial class MainWindow : Window
         if (!_historyMode) return;
         MessageList.Items.Clear();
         int hidden = 0;
-        foreach (var t in threads)
+        foreach (var t in ApplySentToList(threads))
         {
             if (IsHidden(t)) { hidden++; continue; }
             MessageList.Items.Add(new ThreadRow(t));
@@ -1190,11 +1203,118 @@ public partial class MainWindow : Window
         _msgView = MessagesView.Thread;
         UpdateMessagesChrome();
         MessageList.Items.Clear();
-        foreach (var m in messages) MessageList.Items.Add(new SmsRow(m));
-        MessagesStatus.Text = $"{messages.Count} messages — ◀ goes back. " +
-                              "Replies still go through a live notification.";
+        var merged = MergeSent(_openThreadAddress, messages);
+        foreach (var m in merged) MessageList.Items.Add(new SmsRow(m));
+        MessagesStatus.Text = $"{merged.Count} messages — ◀ goes back.";
         if (MessageList.Items.Count > 0) MessageList.ScrollIntoView(MessageList.Items[^1]);
     });
+
+    // ---- Locally echoed sends ----
+    // Only the phone's default SMS app may write to the message store, so a
+    // message sent from here never lands in the thread the phone (or this app)
+    // reads back. Keep our own copy so an open conversation still reads as a
+    // conversation. This is a PC-side echo: the phone's Messages app won't show it.
+    private readonly List<SmsMessage> _sent = new();
+    private static readonly string SentPath = Path.Combine(
+        Path.GetDirectoryName(HistoryPath)!, "sent-messages.tsv");
+    private (string address, string text)? _pendingSend;
+
+    /// <summary>
+    /// Folds our echoed sends into what the phone returned, in time order. An
+    /// echo is dropped when the store already has the same text at nearly the
+    /// same time, so making this the default SMS app later wouldn't double up.
+    /// </summary>
+    private List<SmsMessage> MergeSent(string address, List<SmsMessage> stored)
+    {
+        var key = ThreadKey(address);
+        if (key.Length == 0) return stored;
+        var echoes = _sent
+            .Where(e => ThreadKey(e.Sender) == key)
+            .Where(e => !stored.Any(s =>
+                s.Outgoing && s.Text == e.Text && Math.Abs(s.DateMs - e.DateMs) < 300_000))
+            .ToList();
+        if (echoes.Count == 0) return stored;
+        return stored.Concat(echoes).OrderBy(m => m.DateMs).ToList();
+    }
+
+    /// <summary>
+    /// The conversation list comes from the same store we can't write to, so a
+    /// thread we just sent to would still show their last message as the latest.
+    /// Put our own send back on top where it belongs, and re-sort.
+    /// </summary>
+    private List<SmsThread> ApplySentToList(List<SmsThread> threads)
+    {
+        if (_sent.Count == 0) return threads;
+        var latest = _sent
+            .GroupBy(m => ThreadKey(m.Sender))
+            .ToDictionary(g => g.Key, g => g.MaxBy(m => m.DateMs)!);
+        var updated = threads.Select(t =>
+            latest.TryGetValue(ThreadKey(t.Address), out var m) && m.DateMs > t.DateMs
+                ? t with { Snippet = m.Text, DateMs = m.DateMs, Outgoing = true }
+                : t);
+        return updated.OrderByDescending(t => t.DateMs).ToList();
+    }
+
+    /// <summary>Comparable key for an address, groups included (order-independent).</summary>
+    private static string ThreadKey(string address) => string.Join(
+        ",",
+        address.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(NormaliseNumber)
+            .Where(p => p.Length > 0)
+            .OrderBy(p => p));
+
+    private SmsMessage RecordSent(string address, string text)
+    {
+        // Sender carries the address so a message can be matched to its thread;
+        // SmsRow shows "You" for outgoing messages, so it is never displayed.
+        var m = new SmsMessage(text, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            true, "SENT", address);
+        _sent.Add(m);
+        SaveSent();
+        return m;
+    }
+
+    private void LoadSent()
+    {
+        try
+        {
+            if (!File.Exists(SentPath)) return;
+            foreach (var line in File.ReadAllLines(SentPath))
+            {
+                var f = line.Split('\t');
+                if (f.Length < 3 || !long.TryParse(f[1], out var ms)) continue;
+                _sent.Add(new SmsMessage(Unescape(f[2]), ms, true, "SENT", f[0]));
+            }
+        }
+        catch { /* best-effort */ }
+    }
+
+    private void SaveSent()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SentPath)!);
+            File.WriteAllLines(SentPath, _sent.Select(
+                m => $"{m.Sender}\t{m.DateMs}\t{Escape(m.Text)}"));
+        }
+        catch { /* best-effort */ }
+    }
+
+    // Tabs separate the fields and newlines separate the records, so a message
+    // body containing either would split its own row.
+    private static string Escape(string s) =>
+        s.Replace("\\", "\\\\").Replace("\t", "\\t").Replace("\r", "").Replace("\n", "\\n");
+
+    private static string Unescape(string s)
+    {
+        var b = new System.Text.StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] != '\\' || i + 1 >= s.Length) { b.Append(s[i]); continue; }
+            b.Append(s[++i] switch { 't' => '\t', 'n' => '\n', var c => c });
+        }
+        return b.ToString();
+    }
 
     private void OnMessageListDoubleClick(object sender, MouseButtonEventArgs e)
     {

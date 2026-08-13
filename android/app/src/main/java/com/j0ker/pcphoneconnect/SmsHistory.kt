@@ -1,13 +1,23 @@
 package com.j0ker.pcphoneconnect
 
 import android.Manifest
+import android.app.Activity
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ContentResolver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.ContactsContract
 import androidx.core.content.ContextCompat
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -27,9 +37,10 @@ import org.json.JSONObject
  *    ct='text/plain'.
  *  - Direction is `type` on SMS rows and `msg_box` on MMS rows (2 = sent).
  *
- * Read-only by design. Sending from here would go through SmsManager, which
- * downgrades an RCS conversation to plain SMS and never appears in the phone's
- * own thread, so replies stay on the notification path.
+ * Reading is the main job. Sending is also possible (see [send]) but goes out
+ * through SmsManager, which downgrades an RCS conversation to plain SMS and
+ * cannot write to the message store, so replies from a live notification stay
+ * on the notification path where they keep RCS.
  */
 class SmsHistory(private val context: Context) {
 
@@ -101,31 +112,91 @@ class SmsHistory(private val context: Context) {
      * in the phone's own thread or in this history. Replying to a live
      * notification avoids both problems and is preferred where possible.
      */
-    fun send(to: String, text: String): JSONObject {
-        if (to.isBlank() || text.isBlank()) return sendResult(false, "Nothing to send.")
+    /**
+     * Sends [text] to [to], reporting through [onResult] once the radio says what
+     * happened. The answer is deliberately asynchronous: SmsManager hands the
+     * message off and returns immediately, so reporting success at that point
+     * claims a delivery that may never occur (no service, radio off, bad number).
+     * The PC keeps a local copy of whatever it is told went out, so a false
+     * "sent" would show the user a message nobody ever received.
+     *
+     * [onResult] is called exactly once, on a binder thread or the main thread.
+     */
+    fun send(to: String, text: String, onResult: (JSONObject) -> Unit) {
+        if (to.isBlank() || text.isBlank()) return onResult(sendResult(false, "Nothing to send."))
+        // SmsManager takes a single destination; a comma-joined group address
+        // would go out as one nonsense number.
+        if (to.contains(',')) {
+            return onResult(sendResult(false, "Group sends aren't supported over SMS."))
+        }
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            return sendResult(false, "SMS sending not granted on the phone.")
+            return onResult(sendResult(false, "SMS sending not granted on the phone."))
         }
-        return try {
-            val manager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                context.getSystemService(android.telephony.SmsManager::class.java)
-            } else {
-                @Suppress("DEPRECATION") android.telephony.SmsManager.getDefault()
-            } ?: return sendResult(false, "No SMS service available.")
+        val manager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            context.getSystemService(android.telephony.SmsManager::class.java)
+        } else {
+            @Suppress("DEPRECATION") android.telephony.SmsManager.getDefault()
+        } ?: return onResult(sendResult(false, "No SMS service available."))
 
-            // Long messages have to be split or they are silently truncated.
-            val parts = manager.divideMessage(text)
-            if (parts.size > 1) {
-                manager.sendMultipartTextMessage(to, null, parts, null, null)
-            } else {
-                manager.sendTextMessage(to, null, text, null, null)
+        // Long messages have to be split or they are silently truncated.
+        val parts = manager.divideMessage(text)
+        val action = "$SENT_ACTION.${sendSeq.getAndIncrement()}"
+        val outstanding = AtomicInteger(parts.size)
+        val failure = AtomicReference<String?>(null)
+        val answered = AtomicBoolean(false)
+        val main = Handler(Looper.getMainLooper())
+
+        lateinit var receiver: BroadcastReceiver
+        // One exit point for every path: result, timeout, or throw. Unregistering
+        // twice throws, and answering twice would frame two replies for one send.
+        val finish = { ok: Boolean, message: String ->
+            if (answered.compareAndSet(false, true)) {
+                runCatching { context.unregisterReceiver(receiver) }
+                onResult(sendResult(ok, message))
             }
-            sendResult(true, "Sent as SMS to $to")
-        } catch (t: Throwable) {
-            sendResult(false, "Send failed: ${t.message}")
         }
+        receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, i: Intent?) {
+                if (resultCode != Activity.RESULT_OK) {
+                    failure.compareAndSet(null, sendFailureReason(resultCode))
+                }
+                // Multipart messages report per part; wait for the last one.
+                if (outstanding.decrementAndGet() > 0) return
+                val error = failure.get()
+                if (error == null) finish(true, "Sent as SMS to $to") else finish(false, error)
+            }
+        }
+        ContextCompat.registerReceiver(
+            context, receiver, IntentFilter(action), ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        // Without this the PC waits forever if the radio never answers.
+        main.postDelayed({ finish(false, "No confirmation from the radio — check the phone.") },
+            SEND_TIMEOUT_MS)
+
+        try {
+            val intents = ArrayList<PendingIntent>(parts.size)
+            for (i in parts.indices) {
+                intents.add(
+                    PendingIntent.getBroadcast(
+                        context, i, Intent(action).setPackage(context.packageName),
+                        PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                )
+            }
+            if (parts.size > 1) manager.sendMultipartTextMessage(to, null, parts, intents, null)
+            else manager.sendTextMessage(to, null, text, intents[0], null)
+        } catch (t: Throwable) {
+            finish(false, "Send failed: ${t.message}")
+        }
+    }
+
+    private fun sendFailureReason(code: Int) = when (code) {
+        android.telephony.SmsManager.RESULT_ERROR_NO_SERVICE -> "Not sent: no service."
+        android.telephony.SmsManager.RESULT_ERROR_RADIO_OFF -> "Not sent: the radio is off."
+        android.telephony.SmsManager.RESULT_ERROR_NULL_PDU -> "Not sent: the phone rejected it."
+        else -> "Not sent: the phone reported a failure."
     }
 
     private fun sendResult(ok: Boolean, message: String) =
@@ -435,6 +506,9 @@ class SmsHistory(private val context: Context) {
         private val CONVERSATIONS_URI: Uri = Uri.parse("content://mms-sms/conversations")
         private val CANONICAL_URI: Uri = Uri.parse("content://mms-sms/canonical-addresses")
         private val PART_URI: Uri = Uri.parse("content://mms/part")
+        private const val SENT_ACTION = "com.j0ker.pcphoneconnect.SMS_SENT"
+        private const val SEND_TIMEOUT_MS = 60_000L
+        private val sendSeq = AtomicInteger(1)
         private const val SMS_SENT = 2
         private const val MMS_SENT = 2
         // RCS group threads keep an internal blob here rather than a number.

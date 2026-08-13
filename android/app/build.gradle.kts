@@ -28,8 +28,8 @@ android {
         applicationId = "com.j0ker.pcphoneconnect"
         minSdk = 26
         targetSdk = 36
-        versionCode = 170
-        versionName = "1.70"
+        versionCode = 172
+        versionName = "1.72"
     }
 
     signingConfigs {

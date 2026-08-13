@@ -416,12 +416,14 @@ class StreamService : Service() {
                     return
                 }
                 "sendsms" -> {
+                    // The reply comes back when the radio reports, not when the
+                    // call returns, so it is framed from the callback.
                     smsWorker.execute {
-                        sendFramedSafe(
-                            TYPE_MESSAGE,
-                            smsHistory.send(o.optString("to"), o.optString("text"))
-                                .toString().toByteArray(Charsets.UTF_8)
-                        )
+                        smsHistory.send(o.optString("to"), o.optString("text")) { result ->
+                            sendFramedSafe(
+                                TYPE_MESSAGE, result.toString().toByteArray(Charsets.UTF_8)
+                            )
+                        }
                     }
                     return
                 }

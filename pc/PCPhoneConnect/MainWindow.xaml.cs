@@ -339,6 +339,9 @@ public partial class MainWindow : Window
         _phoneParent = null;
         // Message keys belong to the old connection; replying with them would fail.
         MessageList.Items.Clear();
+        // A send that was never confirmed would otherwise claim the first result
+        // of the next connection and echo the wrong message.
+        _pendingSends.Clear();
         ClearTypeBoxLocal();
         Status(status);
     }
@@ -980,8 +983,11 @@ public partial class MainWindow : Window
                 return;
             }
             MessagesStatus.Text = $"Sending to {_openThreadName}…";
-            _pendingSend = (_openThreadAddress, text);
+            _pendingSends.Enqueue((_openThreadAddress, text));
             _client.SendSms(_openThreadAddress, text);
+            // Confirmation now waits on the radio, which takes seconds. Clear on
+            // dispatch so the box is ready, and put the text back if it fails.
+            ReplyBox.Clear();
             return;
         }
 
@@ -1005,13 +1011,21 @@ public partial class MainWindow : Window
 
     private void OnSmsSent(bool ok, string message) => Dispatcher.Invoke(() =>
     {
-        var pending = _pendingSend;
-        _pendingSend = null;
-        if (!ok) { MessagesStatus.Text = message; return; }
-
-        ReplyBox.Clear();
+        if (!_pendingSends.TryDequeue(out var p))
+        {
+            MessagesStatus.Text = message;
+            return;
+        }
+        // A failed send is not echoed: the local copy exists to mirror what the
+        // network actually took, and showing a message that never went out is
+        // worse than showing none.
+        if (!ok)
+        {
+            MessagesStatus.Text = message;
+            if (ReplyBox.Text.Length == 0) ReplyBox.Text = p.text;   // don't lose what they typed
+            return;
+        }
         MessagesStatus.Text = message;
-        if (pending is not { } p) return;
 
         var echo = RecordSent(p.address, p.text);
         // Show it straight away if that conversation is still on screen.
@@ -1037,6 +1051,8 @@ public partial class MainWindow : Window
     private long _openThreadId;
     private string _openThreadName = "";
     private string _openThreadAddress = "";
+    private readonly Dictionary<long, string> _threadAddresses = new();
+    private readonly Dictionary<long, string> _threadNames = new();
 
     private bool _historyMode => _msgView != MessagesView.Live;
 
@@ -1200,6 +1216,8 @@ public partial class MainWindow : Window
     private void OnThreadLoaded(long id, List<SmsMessage> messages) => Dispatcher.Invoke(() =>
     {
         _openThreadId = id;
+        if (_threadAddresses.TryGetValue(id, out var address)) _openThreadAddress = address;
+        if (_threadNames.TryGetValue(id, out var name)) _openThreadName = name;
         _msgView = MessagesView.Thread;
         UpdateMessagesChrome();
         MessageList.Items.Clear();
@@ -1215,9 +1233,14 @@ public partial class MainWindow : Window
     // reads back. Keep our own copy so an open conversation still reads as a
     // conversation. This is a PC-side echo: the phone's Messages app won't show it.
     private readonly List<SmsMessage> _sent = new();
+    private const int SentLimit = 1000;
     private static readonly string SentPath = Path.Combine(
         Path.GetDirectoryName(HistoryPath)!, "sent-messages.tsv");
-    private (string address, string text)? _pendingSend;
+    // Sends in flight, oldest first. The phone answers in order on one worker,
+    // so the first waiting send owns the next result. A single slot lost the
+    // first message's echo and mislabelled the second whenever two were sent
+    // before the first was confirmed.
+    private readonly Queue<(string address, string text)> _pendingSends = new();
 
     /// <summary>
     /// Folds our echoed sends into what the phone returned, in time order. An
@@ -1270,6 +1293,8 @@ public partial class MainWindow : Window
         var m = new SmsMessage(text, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             true, "SENT", address);
         _sent.Add(m);
+        // The file is rewritten whole on every send, so it can't grow forever.
+        if (_sent.Count > SentLimit) _sent.RemoveRange(0, _sent.Count - SentLimit);
         SaveSent();
         return m;
     }
@@ -1285,6 +1310,7 @@ public partial class MainWindow : Window
                 if (f.Length < 3 || !long.TryParse(f[1], out var ms)) continue;
                 _sent.Add(new SmsMessage(Unescape(f[2]), ms, true, "SENT", f[0]));
             }
+            if (_sent.Count > SentLimit) _sent.RemoveRange(0, _sent.Count - SentLimit);
         }
         catch { /* best-effort */ }
     }
@@ -1322,6 +1348,10 @@ public partial class MainWindow : Window
         {
             _openThreadName = row.Thread.Name.Length > 0 ? row.Thread.Name : row.Thread.Address;
             _openThreadAddress = row.Thread.Address;
+            // Keyed by id so a reply that arrives after the user has opened a
+            // different conversation is still matched to the right one.
+            _threadAddresses[row.Thread.Id] = row.Thread.Address;
+            _threadNames[row.Thread.Id] = _openThreadName;
             MessagesStatus.Text = $"Loading {_openThreadName}…";
             _client.RequestThread(row.Thread.Id);
         }
